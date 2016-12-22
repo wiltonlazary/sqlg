@@ -5,9 +5,13 @@ import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Multimap;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.tuple.Triple;
 import org.apache.tinkerpop.gremlin.process.traversal.Contains;
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
+import org.apache.tinkerpop.gremlin.structure.Element;
 import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.ElementHelper;
 import org.umlg.sqlg.sql.dialect.SqlDialect;
 import org.umlg.sqlg.sql.parse.SchemaTableTree;
 import org.umlg.sqlg.sql.parse.WhereClause;
@@ -503,6 +507,79 @@ public class SqlgUtil {
         return result;
     }
 
+    public static Triple<Map<String, PropertyType>, Map<String, Object>, Map<String, Object>> validateVertexKeysValues(SqlDialect sqlDialect, Object[] keyValues) {
+        Map<String, Object> resultAllValues = new LinkedHashMap<>();
+        Map<String, Object> resultNotNullValues = new LinkedHashMap<>();
+        Map<String, PropertyType> keyPropertyTypeMap = new LinkedHashMap<>();
+
+        if (keyValues.length % 2 != 0)
+            throw Element.Exceptions.providedKeyValuesMustBeAMultipleOfTwo();
+
+        for (int i = 0; i < keyValues.length; i = i + 2) {
+            if (!(keyValues[i] instanceof String) && !(keyValues[i] instanceof T)) {
+                throw Element.Exceptions.providedKeyValuesMustHaveALegalKeyOnEvenIndices();
+            }
+            if (keyValues[i].equals(T.id)) {
+                throw Vertex.Exceptions.userSuppliedIdsNotSupported();
+            }
+            if (!keyValues[i].equals(T.label)) {
+                String key = (String) keyValues[i];
+                sqlDialect.validateColumnName(key);
+                Object value = keyValues[i + 1];
+                ElementHelper.validateProperty(key, value);
+                sqlDialect.validateProperty(key, value);
+                if (value != null) {
+                    resultNotNullValues.put(key, value);
+                    keyPropertyTypeMap.put(key, PropertyType.from(value));
+                }  else {
+                    keyPropertyTypeMap.put(key, PropertyType.STRING);
+                }
+                resultAllValues.put(key, value);
+            }
+        }
+        return Triple.of(keyPropertyTypeMap, resultAllValues, resultNotNullValues);
+    }
+
+    public static Triple<Map<String, PropertyType>, Map<String, Object>, Map<String, Object>> validateVertexKeysValues(SqlDialect sqlDialect, Object[] keyValues, List<String> previousBatchModeKeys) {
+        Map<String, Object> resultAllValues = new LinkedHashMap<>();
+        Map<String, Object> resultNotNullValues = new LinkedHashMap<>();
+        Map<String, PropertyType> keyPropertyTypeMap = new LinkedHashMap<>();
+
+        if (keyValues.length % 2 != 0)
+            throw Element.Exceptions.providedKeyValuesMustBeAMultipleOfTwo();
+
+        int keyCount = 0;
+        for (int i = 0; i < keyValues.length; i = i + 2) {
+            if (!(keyValues[i] instanceof String) && !(keyValues[i] instanceof T)) {
+                throw Element.Exceptions.providedKeyValuesMustHaveALegalKeyOnEvenIndices();
+            }
+            if (keyValues[i].equals(T.id)) {
+                throw Vertex.Exceptions.userSuppliedIdsNotSupported();
+            }
+            if (!keyValues[i].equals(T.label)) {
+                String key = (String) keyValues[i];
+                sqlDialect.validateColumnName(key);
+                Object value = keyValues[i + 1];
+                if (value != null) {
+                    ElementHelper.validateProperty(key, value);
+                    sqlDialect.validateProperty(key, value);
+                }
+                if (value != null) {
+                    resultNotNullValues.put(key, value);
+                    keyPropertyTypeMap.put(key, PropertyType.from(value));
+                }  else {
+                    keyPropertyTypeMap.put(key, PropertyType.STRING);
+                }
+                resultAllValues.put(key, value);
+
+                if (previousBatchModeKeys != null && !previousBatchModeKeys.isEmpty() && !key.equals(previousBatchModeKeys.get(keyCount++))) {
+                    throw new IllegalStateException("Streaming batch mode must occur for the same keys in the same order. Expected " + previousBatchModeKeys.get(keyCount - 1) + " found " + key);
+                }
+            }
+        }
+        return Triple.of(keyPropertyTypeMap, resultAllValues, resultNotNullValues);
+    }
+
     /**
      * Transforms the key values into 2 maps. One for all values and one for where the values are not null.
      * The not null values map is needed to set the properties on the {@link SqlgElement}
@@ -533,7 +610,6 @@ public class SqlgUtil {
         }
         return Pair.of(resultAllValues, resultNotNullValues);
     }
-
 
     public static List<ImmutablePair<PropertyType, Object>> transformToTypeAndValue(Multimap<String, Object> keyValues) {
         List<ImmutablePair<PropertyType, Object>> result = new ArrayList<>();

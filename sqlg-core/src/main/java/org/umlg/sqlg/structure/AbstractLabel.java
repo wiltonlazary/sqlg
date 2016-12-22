@@ -25,6 +25,7 @@ import static org.umlg.sqlg.structure.Topology.SQLG_SCHEMA_PROPERTY_TYPE;
 public abstract class AbstractLabel  implements TopologyInf {
 
     private Logger logger = LoggerFactory.getLogger(AbstractLabel.class.getName());
+    protected boolean committed = true;
     protected String label;
     protected SqlgGraph sqlgGraph;
     protected Map<String, PropertyColumn> properties = new HashMap<>();
@@ -44,6 +45,7 @@ public abstract class AbstractLabel  implements TopologyInf {
         this.label = label;
         for (Map.Entry<String, PropertyType> propertyEntry : properties.entrySet()) {
             PropertyColumn property = new PropertyColumn(this, propertyEntry.getKey(), propertyEntry.getValue());
+            property.setCommitted(false);
             this.uncommittedProperties.put(propertyEntry.getKey(), property);
         }
     }
@@ -51,6 +53,11 @@ public abstract class AbstractLabel  implements TopologyInf {
     AbstractLabel(SqlgGraph sqlgGraph, String label) {
         this.sqlgGraph = sqlgGraph;
         this.label = label;
+    }
+
+    @Override
+    public boolean isCommitted() {
+        return this.committed;
     }
 
     public Index ensureIndexExists(final IndexType indexType, final List<PropertyColumn> properties) {
@@ -237,6 +244,7 @@ public abstract class AbstractLabel  implements TopologyInf {
             Map.Entry<String, PropertyColumn> entry = it.next();
             entry.getValue().afterCommit();
         }
+        this.committed = true;
     }
 
     protected void afterRollback() {
@@ -317,9 +325,6 @@ public abstract class AbstractLabel  implements TopologyInf {
         }
         AbstractLabel other = (AbstractLabel) o;
         if (!this.label.equals(other.label)) {
-            return false;
-        }
-        if (!this.properties.equals(other.properties)) {
             return false;
         }
         return true;

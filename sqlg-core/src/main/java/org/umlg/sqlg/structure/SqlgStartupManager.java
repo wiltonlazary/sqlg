@@ -46,10 +46,15 @@ class SqlgStartupManager {
             StopWatch stopWatch = new StopWatch();
             stopWatch.start();
             if (!existSqlgSchema) {
-                //This exist separately because Hsqldb and H2 do not support "id exist" in the schema creation sql.
+                //This exist separately because Hsqldb and H2 do not support "if exist" in the schema creation sql.
                 createSqlgSchema();
             }
-            createSqlgSchemaTablesAndIndexes();
+            if (!existGuiSchema()) {
+                createGuiSchema();
+            }
+            if (!existSqlgSchema) {
+                createSqlgSchemaTablesAndIndexes();
+            }
             //committing here will ensure that sqlg creates the tables.
             this.sqlgGraph.tx().commit();
             stopWatch.stop();
@@ -80,6 +85,7 @@ class SqlgStartupManager {
         }
 
     }
+
 
     private void cacheTopology() {
         this.sqlgGraph.getTopology().cacheTopology();
@@ -341,6 +347,15 @@ class SqlgStartupManager {
         );
     }
 
+    private void createGuiSchema() {
+        Connection conn = this.sqlgGraph.tx().getConnection();
+        try (Statement statement = conn.createStatement()) {
+            statement.execute("CREATE SCHEMA \"" + Schema.GLOBAL_UNIQUE_INDEX_SCHEMA + "\";");
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private void createSqlgSchemaTablesAndIndexes() {
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
@@ -354,13 +369,27 @@ class SqlgStartupManager {
         }
     }
 
-
     private boolean existSqlgSchema() {
         Connection conn = this.sqlgGraph.tx().getConnection();
         try {
             if (this.sqlDialect.supportSchemas()) {
                 DatabaseMetaData metadata = conn.getMetaData();
                 ResultSet schemaRs = metadata.getSchemas(null /*catalog*/, SQLG_SCHEMA);
+                return schemaRs.next();
+            } else {
+                throw new IllegalStateException("schemas not supported not supported, i.e. probably MariaDB not supported.");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private boolean existGuiSchema() {
+        Connection conn = this.sqlgGraph.tx().getConnection();
+        try {
+            if (this.sqlDialect.supportSchemas()) {
+                DatabaseMetaData metadata = conn.getMetaData();
+                ResultSet schemaRs = metadata.getSchemas(null /*catalog*/, Schema.GLOBAL_UNIQUE_INDEX_SCHEMA);
                 return schemaRs.next();
             } else {
                 throw new IllegalStateException("schemas not supported not supported, i.e. probably MariaDB not supported.");

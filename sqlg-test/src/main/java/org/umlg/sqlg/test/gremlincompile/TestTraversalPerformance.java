@@ -6,7 +6,9 @@ import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.junit.Test;
+import org.umlg.sqlg.structure.PropertyType;
 import org.umlg.sqlg.structure.SqlgVertex;
+import org.umlg.sqlg.structure.VertexLabel;
 import org.umlg.sqlg.test.BaseTest;
 
 import java.sql.*;
@@ -42,7 +44,6 @@ public class TestTraversalPerformance extends BaseTest {
         this.sqlgGraph.tx().commit();
 
     }
-
     @Test
     public void testSpeed() throws InterruptedException {
         StopWatch stopWatch = new StopWatch();
@@ -53,19 +54,17 @@ public class TestTraversalPerformance extends BaseTest {
         }
         //Create a large schema, it slows the maps  down
         this.sqlgGraph.tx().normalBatchModeOn();
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 100; i++) {
             if (i % 100 == 0) {
                 stopWatch.stop();
                 System.out.println("got " + i + " time taken " + stopWatch.toString());
                 stopWatch.reset();
                 stopWatch.start();
-                this.sqlgGraph.tx().commit();
-                this.sqlgGraph.tx().normalBatchModeOn();
             }
             Vertex person = this.sqlgGraph.addVertex("Person_" + i, columns);
             Vertex dog = this.sqlgGraph.addVertex("Dog_" + i, columns);
             ((SqlgVertex)person).addEdgeWithMap("pet_" + i, dog, columns);
-//            this.sqlgGraph.tx().commit();
+            this.sqlgGraph.tx().commit();
         }
         this.sqlgGraph.tx().commit();
         stopWatch.stop();
@@ -73,8 +72,28 @@ public class TestTraversalPerformance extends BaseTest {
         stopWatch.reset();
         stopWatch.start();
 
+        Thread.sleep(5_000);
+
+        Map<String, PropertyType> properties = new HashMap<String, PropertyType>() {{
+           put("name", PropertyType.STRING);
+        }};
+        VertexLabel godVertexLabel = this.sqlgGraph.getTopology().getPublicSchema().ensureVertexLabelExist("God", properties);
+        VertexLabel handVertexLabel = this.sqlgGraph.getTopology().getPublicSchema().ensureVertexLabelExist("Hand", properties);
+        VertexLabel fingerVertexLabel = this.sqlgGraph.getTopology().getPublicSchema().ensureVertexLabelExist("Finger", properties);
+        godVertexLabel.ensureEdgeLabelExist("hand", handVertexLabel);
+        handVertexLabel.ensureEdgeLabelExist("finger", fingerVertexLabel);
+        this.sqlgGraph.tx().commit();
+
+        stopWatch.stop();
+        System.out.println("done another time taken " + stopWatch.toString());
+        stopWatch.reset();
+        stopWatch.start();
+
+        StopWatch stopWatchAddOnly = new StopWatch();
+        stopWatchAddOnly.start();
+
         this.sqlgGraph.tx().normalBatchModeOn();
-        for (int i = 1; i < 100_001; i++) {
+        for (int i = 1; i < 1_00_001; i++) {
             Vertex a = this.sqlgGraph.addVertex(T.label, "God", "name", "god" + i);
             for (int j = 0; j < 2; j++) {
                 Vertex b = this.sqlgGraph.addVertex(T.label, "Hand", "name", "name_" + j);
@@ -84,7 +103,15 @@ public class TestTraversalPerformance extends BaseTest {
                     b.addEdge("finger", c);
                 }
             }
+//            if (i % 500_000 == 0) {
+//                this.sqlgGraph.tx().flush();
+//                stopWatch.split();
+//                System.out.println(stopWatch.toString());
+//                stopWatch.unsplit();
+//            }
         }
+        stopWatchAddOnly.stop();
+        System.out.println("Time for add only : " + stopWatchAddOnly.toString());
         this.sqlgGraph.tx().commit();
         stopWatch.stop();
         System.out.println("Time for insert: " + stopWatch.toString());
@@ -108,7 +135,7 @@ public class TestTraversalPerformance extends BaseTest {
         System.out.println("Time for gremlin: " + stopWatch.toString());
         stopWatch.reset();
         stopWatch.start();
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 5; i++) {
             List<Map<String, Vertex>> traversalMap = sqlgGraph.traversal().V().hasLabel("God").as("god").out("hand").as("hand").out("finger").as("finger").<Vertex>select("god", "hand", "finger").toList();
             assertEquals(1_000_000, traversalMap.size());
             stopWatch.stop();
@@ -121,7 +148,7 @@ public class TestTraversalPerformance extends BaseTest {
         stopWatch.reset();
         stopWatch.start();
 
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 20; i++) {
             Connection connection = sqlgGraph.tx().getConnection();
             try (Statement statement = connection.createStatement()) {
                 ResultSet resultSet = statement.executeQuery("SELECT\n" +
@@ -153,13 +180,13 @@ public class TestTraversalPerformance extends BaseTest {
                 throw new RuntimeException(e);
             }
             stopWatch.stop();
-            System.out.println("Time for name sql: " + stopWatch.toString());
+            System.out.println("Time for name sql 1: " + stopWatch.toString());
             stopWatch.reset();
             stopWatch.start();
         }
         stopWatch.stop();
         stopWatch.reset();
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 20; i++) {
             stopWatch.start();
             Connection connection = sqlgGraph.tx().getConnection();
             try (Statement statement = connection.createStatement()) {
@@ -183,21 +210,86 @@ public class TestTraversalPerformance extends BaseTest {
 
                 while (resultSet.next()) {
                     Long s1 = resultSet.getLong(1);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     String s2 = resultSet.getString(2);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     Long s3 = resultSet.getLong(3);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     String s4 = resultSet.getString(4);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     Long s5 = resultSet.getLong(5);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     String s6 = resultSet.getString(6);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     Long s7 = resultSet.getLong(7);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                     String s8 = resultSet.getString(8);
+                    if (resultSet.wasNull()) {
+                        System.out.println("");
+                    };
                 }
             } catch (SQLException e) {
                 throw new RuntimeException(e);
             }
             stopWatch.stop();
-            System.out.println("Time for index sql: " + stopWatch.toString());
+            System.out.println("Time for index sql 2: " + stopWatch.toString());
+            stopWatch.reset();
+        }
+
+        for (int i = 0; i < 20; i++) {
+            stopWatch.start();
+            Connection connection = sqlgGraph.tx().getConnection();
+            try (Statement statement = connection.createStatement()) {
+                ResultSet resultSet = statement.executeQuery("SELECT\n" +
+                        "\t\"public\".\"V_Finger\".\"ID\" AS \"alias1\",\n" +
+                        "\t\"public\".\"V_Finger\".\"name\" AS \"alias2\",\n" +
+                        "\t \"public\".\"V_God\".\"ID\" AS \"alias3\",\n" +
+                        "\t \"public\".\"V_God\".\"name\" AS \"alias4\",\n" +
+                        "\t \"public\".\"V_Hand\".\"ID\" AS \"alias5\",\n" +
+                        "\t \"public\".\"V_Hand\".\"name\" AS \"alias6\",\n" +
+                        "\t \"public\".\"V_Finger\".\"ID\" AS \"alias7\",\n" +
+                        "\t \"public\".\"V_Finger\".\"name\" AS \"alias8\"\n" +
+                        "FROM\n" +
+                        "\t\"public\".\"V_God\" INNER JOIN\n" +
+                        "\t\"public\".\"E_hand\" ON \"public\".\"V_God\".\"ID\" = \"public\".\"E_hand\".\"public.God__O\" INNER JOIN\n" +
+                        "\t\"public\".\"V_Hand\" ON \"public\".\"E_hand\".\"public.Hand__I\" = \"public\".\"V_Hand\".\"ID\" INNER JOIN\n" +
+                        "\t\"public\".\"E_finger\" ON \"public\".\"V_Hand\".\"ID\" = \"public\".\"E_finger\".\"public.Hand__O\" INNER JOIN\n" +
+                        "\t\"public\".\"V_Finger\" ON \"public\".\"E_finger\".\"public.Finger__I\" = \"public\".\"V_Finger\".\"ID\"");
+                ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
+
+
+                while (resultSet.next()) {
+                    Object s1 = resultSet.getObject(1);
+                    Object s2 = resultSet.getObject(2);
+                    Object s3 = resultSet.getObject(3);
+                    Object s4 = resultSet.getObject(4);
+                    Object s5 = resultSet.getObject(5);
+                    Object s6 = resultSet.getObject(6);
+                    Object s7 = resultSet.getObject(7);
+                    Object s8 = resultSet.getObject(8);
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+            stopWatch.stop();
+            System.out.println("Time for index sql 3: " + stopWatch.toString());
             stopWatch.reset();
         }
 //        Assert.assertEquals(100_000, vertexTraversal(a).out().out().count().next().intValue());
     }
+
 }
