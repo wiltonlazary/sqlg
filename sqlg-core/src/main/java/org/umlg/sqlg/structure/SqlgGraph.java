@@ -321,7 +321,7 @@ public class SqlgGraph implements Graph {
     }
 
     public GraphTraversalSource topology() {
-        return this.traversal().withStrategies(TopologyStrategy.build().selectFrom(this.getTopology().getSqlgSchemaVertexLabels()).create());
+        return this.traversal().withStrategies(TopologyStrategy.build().selectFrom(this.getTopology().getSqlgSchemaAbstractLabels()).create());
     }
 
     public GraphTraversalSource globalUniqueIndexes() {
@@ -1065,13 +1065,14 @@ public class SqlgGraph implements Graph {
 
     public void createVertexLabeledIndex(String label, Object... dummykeyValues) {
         Map<String, PropertyType> columns = SqlgUtil.transformToColumnDefinitionMap(dummykeyValues);
-        VertexLabel vertexLabel = this.getTopology().ensureVertexLabelExist(label, columns);
+        SchemaTable schemaTablePair = SchemaTable.from(this, label, this.getSqlDialect().getPublicSchema());
+        VertexLabel vertexLabel = this.getTopology().ensureVertexLabelExist(schemaTablePair.getSchema(), schemaTablePair.getTable(), columns);
         List<PropertyColumn> properties = new ArrayList<>();
         List<String> keys = SqlgUtil.transformToKeyList(dummykeyValues);
         for (String key : keys) {
             properties.add(vertexLabel.getProperty(key).get());
         }
-        this.getTopology().getPublicSchema().getVertexLabel(label).get().ensureIndexExists(IndexType.NON_UNIQUE, properties);
+        vertexLabel.ensureIndexExists(IndexType.NON_UNIQUE, properties);
     }
 
     public long countVertices() {
@@ -1121,11 +1122,13 @@ public class SqlgGraph implements Graph {
 
     private SqlgPlugin findSqlgPlugin(DatabaseMetaData metadata) throws SQLException {
         for (SqlgPlugin p : ServiceLoader.load(SqlgPlugin.class)) {
+            logger.info("found plugin for SqlgPlugin.class");
             if (p.canWorkWith(metadata)) {
                 return p;
+            } else {
+                logger.info("can not work with SqlgPlugin.class");
             }
         }
-
         return null;
     }
 

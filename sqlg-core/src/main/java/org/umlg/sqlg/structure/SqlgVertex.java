@@ -3,6 +3,7 @@ package org.umlg.sqlg.structure;
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
 import org.apache.tinkerpop.gremlin.structure.*;
 import org.apache.tinkerpop.gremlin.structure.util.ElementHelper;
@@ -228,13 +229,17 @@ public class SqlgVertex extends SqlgElement implements Vertex {
         if (this.sqlgGraph.features().supportsBatchMode() && this.sqlgGraph.tx().isInBatchMode() && this.sqlgGraph.tx().getBatchManager().vertexIsCached(this)) {
             this.sqlgGraph.tx().flush();
         }
+        // need topology when we're a topology vertex
+        GraphTraversalSource gts=Topology.SQLG_SCHEMA.equals(schema)?
+        		this.sqlgGraph.topology()
+        		:this.sqlgGraph.traversal();
         switch (direction) {
             case OUT:
-                return this.sqlgGraph.traversal().V(this).outE(labels);
+                return gts.V(this).outE(labels);
             case IN:
-                return this.sqlgGraph.traversal().V(this).inE(labels);
+                return gts.V(this).inE(labels);
             case BOTH:
-                return this.sqlgGraph.traversal().V(this).bothE(labels);
+                return gts.V(this).bothE(labels);
         }
         return Collections.emptyIterator();
     }
@@ -503,14 +508,18 @@ public class SqlgVertex extends SqlgElement implements Vertex {
         if (this.sqlgGraph.tx().getBatchManager().isStreaming()) {
             throw new IllegalStateException("streaming is in progress, first flush or commit before querying.");
         }
+        // need topology when we're a topology vertex
+        GraphTraversalSource gts=Topology.SQLG_SCHEMA.equals(schema)?
+                this.sqlgGraph.topology()
+                :this.sqlgGraph.traversal();
         //for some very bezaar reason not adding toList().iterator() return one extra element.
         switch (direction) {
             case OUT:
-                return this.sqlgGraph.traversal().V(this).out(edgeLabels).toList().iterator();
+                return gts.V(this).out(edgeLabels).toList().iterator();
             case IN:
-                return this.sqlgGraph.traversal().V(this).in(edgeLabels).toList().iterator();
+                return gts.V(this).in(edgeLabels).toList().iterator();
             case BOTH:
-                return this.sqlgGraph.traversal().V(this).both(edgeLabels).toList().iterator();
+                return gts.V(this).both(edgeLabels).toList().iterator();
         }
         return Collections.emptyIterator();
     }

@@ -45,8 +45,8 @@ public class Topology {
     private Map<String, Schema> schemas = new HashMap<>();
     private Map<String, Schema> uncommittedSchemas = new HashMap<>();
     private Map<String, Schema> metaSchemas = new HashMap<>();
-    //A cache of just the sqlg_schema's VertexLabels
-    private Set<TopologyInf> sqlgSchemaVertexLabels = new HashSet<>();
+    //A cache of just the sqlg_schema's AbstractLabels
+    private Set<TopologyInf> sqlgSchemaAbstractLabels = new HashSet<>();
     private Set<GlobalUniqueIndex> globalUniqueIndexes = new HashSet<>();
     private Set<GlobalUniqueIndex> uncommittedGlobalUniqueIndexes = new HashSet<>();
 
@@ -243,50 +243,59 @@ public class Topology {
         columns.put(SQLG_SCHEMA_PROPERTY_NAME, PropertyType.STRING);
         columns.put(CREATED_ON, PropertyType.LOCALDATETIME);
         VertexLabel schemaVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_SCHEMA, columns);
-        this.sqlgSchemaVertexLabels.add(schemaVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(schemaVertexLabel);
         columns.put(SCHEMA_VERTEX_DISPLAY, PropertyType.STRING);
         VertexLabel vertexVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_VERTEX_LABEL, columns);
-        this.sqlgSchemaVertexLabels.add(vertexVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(vertexVertexLabel);
         columns.remove(SCHEMA_VERTEX_DISPLAY);
         VertexLabel edgeVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_EDGE_LABEL, columns);
-        this.sqlgSchemaVertexLabels.add(edgeVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(edgeVertexLabel);
 
         columns.put(SQLG_SCHEMA_PROPERTY_TYPE, PropertyType.STRING);
         VertexLabel propertyVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_PROPERTY, columns);
-        this.sqlgSchemaVertexLabels.add(propertyVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(propertyVertexLabel);
 
         columns.clear();
         columns.put(SQLG_SCHEMA_INDEX_NAME, PropertyType.STRING);
         columns.put(SQLG_SCHEMA_INDEX_INDEX_TYPE, PropertyType.STRING);
         columns.put(CREATED_ON, PropertyType.LOCALDATETIME);
         VertexLabel indexVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_INDEX, columns);
-        this.sqlgSchemaVertexLabels.add(indexVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(indexVertexLabel);
 
         columns.clear();
         columns.put(SQLG_SCHEMA_GLOBAL_UNIQUE_INDEX_NAME, PropertyType.STRING);
         columns.put(CREATED_ON, PropertyType.LOCALDATETIME);
         VertexLabel globalUniqueIndexVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_GLOBAL_UNIQUE_INDEX, columns);
-        this.sqlgSchemaVertexLabels.add(globalUniqueIndexVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(globalUniqueIndexVertexLabel);
 
         columns.clear();
         @SuppressWarnings("unused")
         EdgeLabel schemaToVertexEdgeLabel = schemaVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_SCHEMA_VERTEX_EDGE, vertexVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(schemaToVertexEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel vertexInEdgeLabel = vertexVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_IN_EDGES_EDGE, edgeVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(vertexInEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel vertexOutEdgeLabel = vertexVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_OUT_EDGES_EDGE, edgeVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(vertexOutEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel vertexPropertyEdgeLabel = vertexVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_VERTEX_PROPERTIES_EDGE, propertyVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(vertexPropertyEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel edgePropertyEdgeLabel = edgeVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_EDGE_PROPERTIES_EDGE, propertyVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(edgePropertyEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel vertexIndexEdgeLabel = vertexVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_VERTEX_INDEX_EDGE, indexVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(vertexIndexEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel edgeIndexEdgeLabel = edgeVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_EDGE_INDEX_EDGE, indexVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(edgeIndexEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel indexPropertyEdgeLabel = indexVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_INDEX_PROPERTY_EDGE, propertyVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(indexPropertyEdgeLabel);
         @SuppressWarnings("unused")
         EdgeLabel globalUniqueIndexPropertyEdgeLabel = globalUniqueIndexVertexLabel.loadSqlgSchemaEdgeLabel(SQLG_SCHEMA_GLOBAL_UNIQUE_INDEX_PROPERTY_EDGE, propertyVertexLabel, columns);
+        this.sqlgSchemaAbstractLabels.add(globalUniqueIndexPropertyEdgeLabel);
 
         columns.clear();
         columns.put(SQLG_SCHEMA_LOG_TIMESTAMP, PropertyType.LOCALDATETIME);
@@ -294,7 +303,7 @@ public class Topology {
         columns.put(SQLG_SCHEMA_LOG_PID, PropertyType.INTEGER);
         @SuppressWarnings("unused")
         VertexLabel logVertexLabel = sqlgSchema.createSqlgSchemaVertexLabel(SQLG_SCHEMA_LOG, columns);
-        this.sqlgSchemaVertexLabels.add(logVertexLabel);
+        this.sqlgSchemaAbstractLabels.add(logVertexLabel);
 
         //add the public schema
         this.schemas.put(sqlgGraph.getSqlDialect().getPublicSchema(), Schema.createPublicSchema(this, sqlgGraph.getSqlDialect().getPublicSchema()));
@@ -760,6 +769,9 @@ public class Topology {
 
             }
             schema.loadVertexOutEdgesAndProperties(traversalSource, schemaVertex);
+            // load vertex and edge indices
+            schema.loadVertexIndices(traversalSource, schemaVertex);
+            schema.loadEdgeIndices(traversalSource, schemaVertex);
         }
         //Now load the in edges
         schemaVertices = traversalSource.V().hasLabel(SQLG_SCHEMA + "." + SQLG_SCHEMA_SCHEMA).toList();
@@ -1004,8 +1016,8 @@ public class Topology {
     /////////////////////////////////getters and cache/////////////////////////////
 
 
-    public Set<TopologyInf> getSqlgSchemaVertexLabels() {
-        return this.sqlgSchemaVertexLabels;
+    public Set<TopologyInf> getSqlgSchemaAbstractLabels() {
+        return this.sqlgSchemaAbstractLabels;
     }
 
     public Set<GlobalUniqueIndex> getGlobalUniqueIndexes() {
@@ -1116,7 +1128,21 @@ public class Topology {
         return result;
     }
 
+    /**
+     * get all tables by schema, with their properties
+     * does not return schema tables
+     * @return
+     */
     public Map<String, Map<String, PropertyType>> getAllTables() {
+    	return getAllTables(false);
+    }
+    
+    /**
+     * get all tables by schema, with their properties
+     * @param withSqlgSchema do we want the sqlg_schema tables?
+     * @return
+     */
+    public Map<String, Map<String, PropertyType>> getAllTables(boolean withSqlgSchema) {
         this.z_internalReadLock();
         try {
             //Need to make a copy so as not to corrupt the allTableCache with uncommitted schema elements
@@ -1139,8 +1165,10 @@ public class Topology {
                     }
                 }
             }
-            for (String sqlgSchemaSchemaTable : SQLG_SCHEMA_SCHEMA_TABLES) {
-                result.remove(sqlgSchemaSchemaTable);
+            if (!withSqlgSchema){
+            	for (String sqlgSchemaSchemaTable : SQLG_SCHEMA_SCHEMA_TABLES) {
+            		result.remove(sqlgSchemaSchemaTable);
+            	}
             }
 
             return Collections.unmodifiableMap(result);
@@ -1176,16 +1204,12 @@ public class Topology {
                     Schema schema = abstractLabel.getSchema();
                     String key = schema.getName() + "." + (abstractLabel instanceof VertexLabel ? SchemaManager.VERTEX_PREFIX : SchemaManager.EDGE_PREFIX) + abstractLabel.getLabel();
                     Map<String, PropertyType> tmp = this.allTableCache.get(key);
-                    if (!tmp.isEmpty()) {
-                        result.put(key, tmp);
-                    }
+                    result.put(key, tmp);
                 } else if (f instanceof GlobalUniqueIndex) {
                     GlobalUniqueIndex globalUniqueIndex = (GlobalUniqueIndex) f;
                     String key = Schema.GLOBAL_UNIQUE_INDEX_SCHEMA + "." + SchemaManager.VERTEX_PREFIX + globalUniqueIndex.getName();
                     Map<String, PropertyType> tmp = this.allTableCache.get(key);
-                    if (!tmp.isEmpty()) {
-                        result.put(key, tmp);
-                    }
+                    result.put(key, tmp);
                 }
             }
             return Collections.unmodifiableMap(result);

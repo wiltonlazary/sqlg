@@ -232,7 +232,7 @@ public class SqlgUtil {
 
     public static int setKeyValuesAsParameterUsingPropertyColumn(SqlgGraph sqlgGraph, boolean mod, int parameterStartIndex, PreparedStatement preparedStatement, Collection<Pair<PropertyColumn, Object>> typeAndValues) throws SQLException {
         for (Pair<PropertyColumn, Object> pair : typeAndValues) {
-            parameterStartIndex = setKayValueAsParameter(sqlgGraph, mod, parameterStartIndex, preparedStatement, ImmutablePair.of(pair.getLeft().getPropertyType(), pair.getRight()));
+            parameterStartIndex = setKeyValueAsParameter(sqlgGraph, mod, parameterStartIndex, preparedStatement, ImmutablePair.of(pair.getLeft().getPropertyType(), pair.getRight()));
         }
         return parameterStartIndex;
     }
@@ -246,12 +246,12 @@ public class SqlgUtil {
 
     public static int setKeyValuesAsParameter(SqlgGraph sqlgGraph, boolean mod, int parameterStartIndex, PreparedStatement preparedStatement, Collection<ImmutablePair<PropertyType, Object>> typeAndValues) throws SQLException {
         for (ImmutablePair<PropertyType, Object> pair : typeAndValues) {
-            parameterStartIndex = setKayValueAsParameter(sqlgGraph, mod, parameterStartIndex, preparedStatement, pair);
+            parameterStartIndex = setKeyValueAsParameter(sqlgGraph, mod, parameterStartIndex, preparedStatement, pair);
         }
         return parameterStartIndex;
     }
 
-    private static int setKayValueAsParameter(SqlgGraph sqlgGraph, boolean mod, int parameterStartIndex, PreparedStatement preparedStatement, ImmutablePair<PropertyType, Object> pair) throws SQLException {
+    private static int setKeyValueAsParameter(SqlgGraph sqlgGraph, boolean mod, int parameterStartIndex, PreparedStatement preparedStatement, ImmutablePair<PropertyType, Object> pair) throws SQLException {
         switch (pair.left) {
             case BOOLEAN:
                 preparedStatement.setBoolean(parameterStartIndex++, (Boolean) pair.right);
@@ -301,7 +301,7 @@ public class SqlgUtil {
                     preparedStatement.setString(parameterStartIndex++, ((ZonedDateTime) pair.right).getZone().getId());
                 break;
             case LOCALTIME:
-                //looses nano seconds
+                //loses nano seconds
                 preparedStatement.setTime(parameterStartIndex++, Time.valueOf((LocalTime) pair.right));
                 break;
             case PERIOD:
@@ -471,7 +471,7 @@ public class SqlgUtil {
         int i = 1;
         for (Object keyValue : keyValues) {
             if (i++ % 2 != 0) {
-                keys.add((String)keyValue);
+                keys.add((String) keyValue);
             }
         }
         return keys;
@@ -531,7 +531,7 @@ public class SqlgUtil {
                 if (value != null) {
                     resultNotNullValues.put(key, value);
                     keyPropertyTypeMap.put(key, PropertyType.from(value));
-                }  else {
+                } else {
                     keyPropertyTypeMap.put(key, PropertyType.STRING);
                 }
                 resultAllValues.put(key, value);
@@ -567,7 +567,7 @@ public class SqlgUtil {
                 if (value != null) {
                     resultNotNullValues.put(key, value);
                     keyPropertyTypeMap.put(key, PropertyType.from(value));
-                }  else {
+                } else {
                     keyPropertyTypeMap.put(key, PropertyType.STRING);
                 }
                 resultAllValues.put(key, value);
@@ -706,7 +706,15 @@ public class SqlgUtil {
         }
     }
 
-    public static Map<String, Map<String, PropertyType>> filterHasContainers(Topology topology, List<HasContainer> hasContainers) {
+    /**
+     * return tables in their schema with their properties, matching the given hasContainers
+     *
+     * @param topology
+     * @param hasContainers
+     * @param withSqlgSchema    do we want the sqlg schema tables too?
+     * @return
+     */
+    public static Map<String, Map<String, PropertyType>> filterHasContainers(Topology topology, List<HasContainer> hasContainers, boolean withSqlgSchema) {
         HasContainer fromHasContainer = null;
         HasContainer withoutHasContainer = null;
 
@@ -727,7 +735,7 @@ public class SqlgUtil {
         } else if (withoutHasContainer != null) {
             filteredAllTables = topology.getAllTablesWithout((Set<TopologyInf>) withoutHasContainer.getPredicate().getValue());
         } else {
-            filteredAllTables = topology.getAllTables();
+            filteredAllTables = topology.getAllTables(withSqlgSchema);
         }
         return filteredAllTables;
     }
