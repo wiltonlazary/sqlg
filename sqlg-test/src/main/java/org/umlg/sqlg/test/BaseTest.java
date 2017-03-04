@@ -49,9 +49,11 @@ public abstract class BaseTest {
 
     private static Logger logger = LoggerFactory.getLogger(BaseTest.class.getName());
     protected SqlgGraph sqlgGraph;
+    protected SqlgGraph sqlgGraph1;
     protected GraphTraversalSource gt;
     protected static Configuration configuration;
     private long start;
+    protected static final int SLEEP_TIME = 1000;
 
     @Rule
     public TestRule watcher = new TestWatcher() {
@@ -94,14 +96,29 @@ public abstract class BaseTest {
         this.sqlgGraph.close();
         this.sqlgGraph = SqlgGraph.open(configuration);
         this.gt = this.sqlgGraph.traversal();
+        if (configuration.getBoolean("distributed", false)) {
+            this.sqlgGraph1 = SqlgGraph.open(configuration);
+        }
         stopWatch.stop();
         logger.info("Startup time for test = " + stopWatch.toString());
     }
 
     @After
     public void after() throws Exception {
-        this.sqlgGraph.tx().onClose(Transaction.CLOSE_BEHAVIOR.ROLLBACK);
-        this.sqlgGraph.close();
+        try {
+            this.sqlgGraph.tx().onClose(Transaction.CLOSE_BEHAVIOR.ROLLBACK);
+            this.sqlgGraph.close();
+        } catch (Exception e){
+            logger.error(e.getMessage(), e);
+        }
+        try {
+            if (this.sqlgGraph1 != null) {
+                this.sqlgGraph1.tx().onClose(Transaction.CLOSE_BEHAVIOR.ROLLBACK);
+                this.sqlgGraph1.close();
+            }
+        } catch (Exception e){
+            logger.error(e.getMessage(), e);
+        }
     }
 
     /**
@@ -119,19 +136,19 @@ public abstract class BaseTest {
         return conf;
     }
 
-    protected GraphTraversal<Vertex, Vertex> vertexTraversal(Vertex v) {
-        return v.graph().traversal().V(v);
+    protected GraphTraversal<Vertex, Vertex> vertexTraversal(SqlgGraph sqlgGraph, Vertex v) {
+        return sqlgGraph.traversal().V(v);
     }
 
-    protected GraphTraversal<Edge, Edge> edgeTraversal(Edge e) {
-        return e.graph().traversal().E(e.id());
+    protected GraphTraversal<Edge, Edge> edgeTraversal(SqlgGraph sqlgGraph, Edge e) {
+        return sqlgGraph.traversal().E(e);
     }
 
     protected void assertDb(String table, int numberOfRows) {
         Connection conn = null;
         Statement stmt = null;
         try {
-            conn = this.sqlgGraph.getSqlgDataSource().get(this.sqlgGraph.getJdbcUrl()).getConnection();
+            conn = this.sqlgGraph.getConnection();
             stmt = conn.createStatement();
             StringBuilder sql = new StringBuilder("SELECT * FROM ");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.sqlgGraph.getSqlDialect().getPublicSchema()));

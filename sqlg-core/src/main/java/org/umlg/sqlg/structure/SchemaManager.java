@@ -9,6 +9,7 @@ import org.umlg.sqlg.util.SqlgUtil;
 
 import java.sql.*;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -56,7 +57,7 @@ public class SchemaManager {
      * Deletes all tables.
      */
     public void clear() {
-        try (Connection conn = this.sqlgGraph.getSqlgDataSource().get(this.sqlgGraph.getJdbcUrl()).getConnection()) {
+        try (Connection conn = this.sqlgGraph.getConnection()) {
             DatabaseMetaData metadata;
             metadata = conn.getMetaData();
             if (sqlDialect.supportsCascade()) {
@@ -100,6 +101,7 @@ public class SchemaManager {
         return this.topology.getTableLabels();
     }
 
+    @Deprecated
     public Pair<Set<SchemaTable>, Set<SchemaTable>> getTableLabels(SchemaTable schemaTable) {
         return this.topology.getTableLabels(schemaTable);
     }
@@ -113,6 +115,12 @@ public class SchemaManager {
         return getAllTablesWithout(this.getTopology().getSqlgSchemaAbstractLabels());
     }
 
+    /**
+     * Use the {@link Topology} class directly instead.
+     * @param filter The objects not to include in the result.
+     * @return A map without the filter elements present.
+     */
+    @Deprecated
     public Map<String, Map<String, PropertyType>> getAllTablesWithout(Set<TopologyInf> filter) {
         return this.topology.getAllTablesWithout(filter);
     }
@@ -123,7 +131,8 @@ public class SchemaManager {
 
     public boolean tableExist(String schema, String table) {
         SchemaTable schemaTable = SchemaTable.of(schema, table);
-        return !getTableFor(schemaTable).isEmpty();
+        Optional<Schema> schemaOptional = this.topology.getSchema(schemaTable.getSchema());
+        return schemaOptional.isPresent() && schemaOptional.get().getVertexLabel(schemaTable.withOutPrefix().getTable()).isPresent();
     }
 
     public Map<String, PropertyType> getTableFor(SchemaTable schemaTable) {

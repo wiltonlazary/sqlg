@@ -32,18 +32,38 @@ public class GlobalUniqueIndex implements TopologyInf {
         }
     }
 
+    public Set<PropertyColumn> getProperties() {
+        return properties;
+    }
+
     private GlobalUniqueIndex(Topology topology, String name) {
         this.topology = topology;
         this.name = name;
     }
 
     static GlobalUniqueIndex instantiateGlobalUniqueIndex(Topology topology, String name) {
-        GlobalUniqueIndex globalUniqueIndex = new GlobalUniqueIndex(topology, name);
-        return globalUniqueIndex;
+        return new GlobalUniqueIndex(topology, name);
     }
 
     public String getName() {
         return name;
+    }
+    
+    @Override
+    public int hashCode() {
+        return this.getName().hashCode();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this==other) {
+            return true;
+        }
+        if (!(other instanceof GlobalUniqueIndex)) {
+            return false;
+        }
+        GlobalUniqueIndex otherIndex = (GlobalUniqueIndex) other;
+        return this.name.equals(otherIndex.name);
     }
 
     @Override
@@ -64,13 +84,11 @@ public class GlobalUniqueIndex implements TopologyInf {
     }
 
     void afterCommit() {
-        if (this.topology.isWriteLockHeldByCurrentThread()) {
-            Iterator<PropertyColumn> propertyColumnIterator = this.uncommittedProperties.iterator();
-            while (propertyColumnIterator.hasNext()) {
-                PropertyColumn propertyColumn = propertyColumnIterator.next();
-                this.properties.add(propertyColumn);
-                propertyColumnIterator.remove();
-            }
+        Iterator<PropertyColumn> propertyColumnIterator = this.uncommittedProperties.iterator();
+        while (propertyColumnIterator.hasNext()) {
+            PropertyColumn propertyColumn = propertyColumnIterator.next();
+            this.properties.add(propertyColumn);
+            propertyColumnIterator.remove();
         }
         this.committed = true;
     }
@@ -104,7 +122,7 @@ public class GlobalUniqueIndex implements TopologyInf {
     static String globalUniqueIndexName(Topology topology, Set<PropertyColumn> properties) {
         List<PropertyColumn> propertyColumns = new ArrayList<>(properties);
         propertyColumns.sort(Comparator.comparing(PropertyColumn::getName));
-        String name = propertyColumns.stream().map(p -> p.getAbstractLabel().getLabel() + "_" + p.getName()).reduce((a, b) -> a + "_" + b).get();
+        String name = propertyColumns.stream().map(p -> p.getParentLabel().getLabel() + "_" + p.getName()).reduce((a, b) -> a + "_" + b).get();
         if (("gui_schema_V_A" + name).length() > 50) {
             name = "globalUniqueIndex_" + topology.getGlobalUniqueIndexes().size();
         }
@@ -117,8 +135,8 @@ public class GlobalUniqueIndex implements TopologyInf {
         ArrayNode propertyArrayNode = new ArrayNode(Topology.OBJECT_MAPPER.getNodeFactory());
         for (PropertyColumn property : this.uncommittedProperties) {
             ObjectNode objectNode = property.toNotifyJson();
-            objectNode.put("schemaName", property.getAbstractLabel().getSchema().getName());
-            objectNode.put("abstractLabelLabel", property.getAbstractLabel().getLabel());
+            objectNode.put("schemaName", property.getParentLabel().getSchema().getName());
+            objectNode.put("abstractLabelLabel", property.getParentLabel().getLabel());
             propertyArrayNode.add(objectNode);
         }
         result.put("name", getName());
@@ -126,5 +144,26 @@ public class GlobalUniqueIndex implements TopologyInf {
         return Optional.of(result);
     }
 
-
+    /**
+     * JSON representation of committed state
+     * @return
+     */
+    protected JsonNode toJson(){
+    	ObjectNode result = new ObjectNode(Topology.OBJECT_MAPPER.getNodeFactory());
+        ArrayNode propertyArrayNode = new ArrayNode(Topology.OBJECT_MAPPER.getNodeFactory());
+        for (PropertyColumn property : this.properties) {
+            ObjectNode objectNode = property.toNotifyJson();
+            objectNode.put("schemaName", property.getParentLabel().getSchema().getName());
+            objectNode.put("abstractLabelLabel", property.getParentLabel().getLabel());
+            propertyArrayNode.add(objectNode);
+        }
+        result.put("name", getName());
+        result.set("properties", propertyArrayNode);
+        return result;
+    }
+    
+    @Override
+    public String toString() {
+        return toJson().toString();
+    }
 }

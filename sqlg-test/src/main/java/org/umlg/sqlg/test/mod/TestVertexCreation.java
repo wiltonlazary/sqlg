@@ -24,7 +24,7 @@ public class TestVertexCreation extends BaseTest {
     public void testCreateEmptyVertex() throws SQLException {
         sqlgGraph.addVertex();
         sqlgGraph.tx().commit();
-        try (Connection conn = this.sqlgGraph.getSqlgDataSource().get(this.sqlgGraph.getJdbcUrl()).getConnection()) {
+        try (Connection conn = this.sqlgGraph.getConnection()) {
             try (Statement stmt = conn.createStatement()) {
                 StringBuilder sql = new StringBuilder("SELECT * FROM ");
                 sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.sqlgGraph.getSqlDialect().getPublicSchema()));
@@ -67,7 +67,7 @@ public class TestVertexCreation extends BaseTest {
         );
         sqlgGraph.tx().commit();
 
-        try (Connection conn = this.sqlgGraph.getSqlgDataSource().get(this.sqlgGraph.getJdbcUrl()).getConnection()) {
+        try (Connection conn = this.sqlgGraph.getConnection()) {
             try (Statement stmt = conn.createStatement()) {
                 StringBuilder sql = new StringBuilder("SELECT * FROM ");
                 sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.sqlgGraph.getSqlDialect().getPublicSchema()));
@@ -114,11 +114,11 @@ public class TestVertexCreation extends BaseTest {
         this.sqlgGraph.tx().commit();
         assertEquals(1, this.sqlgGraph.traversal().V().count().next(), 0);
         assertEquals(v1, this.sqlgGraph.traversal().V(v1.id()).next());
-        assertEquals(1, vertexTraversal(v1).properties().count().next(), 0);
+        assertEquals(1, vertexTraversal(this.sqlgGraph, v1).properties().count().next(), 0);
         Vertex v2 = this.sqlgGraph.addVertex(T.label, "Person", "name2", "john");
         assertEquals(2, this.sqlgGraph.traversal().V().count().next(), 0);
         assertEquals(v2, this.sqlgGraph.traversal().V(v2.id()).next());
-        assertEquals(1, vertexTraversal(v2).properties().count().next(), 0);
+        assertEquals(1, vertexTraversal(this.sqlgGraph, v2).properties().count().next(), 0);
     }
 
 }

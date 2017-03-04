@@ -26,6 +26,9 @@ import org.umlg.sqlg.sql.parse.GremlinParser;
 import org.umlg.sqlg.strategy.SqlgGraphStepStrategy;
 import org.umlg.sqlg.strategy.SqlgVertexStepStrategy;
 import org.umlg.sqlg.strategy.TopologyStrategy;
+import org.umlg.sqlg.structure.SqlgDataSourceFactory.SqlgDataSource;
+import org.umlg.sqlg.structure.ds.C3p0DataSourceFactory;
+import org.umlg.sqlg.structure.ds.JNDIDataSource;
 import org.umlg.sqlg.util.SqlgUtil;
 
 import java.sql.*;
@@ -38,14 +41,8 @@ import static org.umlg.sqlg.structure.SchemaManager.VERTEX_PREFIX;
  * Date: 2014/07/12
  * Time: 5:38 AM
  */
-@Graph.OptIn(Graph.OptIn.SUITE_STRUCTURE_PERFORMANCE)
-@Graph.OptIn(Graph.OptIn.SUITE_PROCESS_PERFORMANCE)
 @Graph.OptIn(Graph.OptIn.SUITE_STRUCTURE_STANDARD)
 @Graph.OptIn(Graph.OptIn.SUITE_PROCESS_STANDARD)
-@Graph.OptIn(Graph.OptIn.SUITE_GROOVY_PROCESS_STANDARD)
-@Graph.OptIn(Graph.OptIn.SUITE_GROOVY_ENVIRONMENT)
-@Graph.OptIn(Graph.OptIn.SUITE_GROOVY_ENVIRONMENT_INTEGRATE)
-@Graph.OptIn(Graph.OptIn.SUITE_GROOVY_ENVIRONMENT_PERFORMANCE)
 
 @Graph.OptOut(
         test = "org.apache.tinkerpop.gremlin.process.traversal.TraversalInterruptionTest",
@@ -212,19 +209,21 @@ public class SqlgGraph implements Graph {
     //This has some static suckness
     static {
         TraversalStrategies.GlobalCache.registerStrategies(Graph.class, TraversalStrategies.GlobalCache.getStrategies(Graph.class)
-                .addStrategies(new SqlgVertexStepStrategy())
-                .addStrategies(new SqlgGraphStepStrategy())
-                .addStrategies(TopologyStrategy.build().create()));
+                .addStrategies(new SqlgGraphStepStrategy(), new SqlgVertexStepStrategy(), TopologyStrategy.build().create()));
     }
 
     public static <G extends Graph> G open(final Configuration configuration) {
+        return open(configuration, createDataSourceFactory(configuration));
+    }
+
+    public static <G extends Graph> G open(final Configuration configuration, SqlgDataSourceFactory dataSourceFactory) {
         if (null == configuration) throw Graph.Exceptions.argumentCanNotBeNull("configuration");
 
         if (!configuration.containsKey(JDBC_URL))
             throw new IllegalArgumentException(String.format("SqlgGraph configuration requires that the %s be set", JDBC_URL));
 
-        SqlgGraph sqlgGraph = new SqlgGraph(configuration);
-        SqlgStartupManager sqlgStartupManager = new SqlgStartupManager(sqlgGraph, configuration);
+        SqlgGraph sqlgGraph = new SqlgGraph(configuration, dataSourceFactory);
+        SqlgStartupManager sqlgStartupManager = new SqlgStartupManager(sqlgGraph);
         sqlgStartupManager.loadSchema();
         return (G) sqlgGraph;
     }
@@ -238,21 +237,28 @@ public class SqlgGraph implements Graph {
         } catch (ConfigurationException e) {
             throw new RuntimeException(e);
         }
-        return open(configuration);
+        return open(configuration, createDataSourceFactory(configuration));
     }
 
-    private SqlgGraph(final Configuration configuration) {
+    public static SqlgDataSourceFactory createDataSourceFactory(Configuration configuration) {
+        try {
+            return (SqlgDataSourceFactory) Class.forName(configuration.getString("jdbc.factory", C3p0DataSourceFactory.class.getCanonicalName())).newInstance();
+        } catch (Exception ex) {
+            throw new IllegalStateException("Could not create sqlg factory", ex);
+        }
+    }
+
+    private SqlgGraph(final Configuration configuration, SqlgDataSourceFactory dataSourceFactory) {
         this.implementForeignKeys = configuration.getBoolean("implement.foreign.keys", true);
         this.configuration = configuration;
 
         try {
             this.jdbcUrl = this.configuration.getString(JDBC_URL);
 
-            if (jdbcUrl.startsWith(SqlgDataSource.JNDI_PREFIX)) {
-                this.sqlgDataSource = SqlgDataSource
-                        .setupDataSourceFromJndi(jdbcUrl.substring(SqlgDataSource.JNDI_PREFIX.length()),
-                                this.configuration);
-                try (Connection conn = this.sqlgDataSource.get(jdbcUrl).getConnection()) {
+            if (JNDIDataSource.isJNDIUrl(this.jdbcUrl)) {
+                this.sqlgDataSource = JNDIDataSource.create(configuration);
+
+                try (Connection conn = this.getConnection()) {
                     SqlgPlugin p = findSqlgPlugin(conn.getMetaData());
                     if (p == null) {
                         throw new IllegalStateException("Could not find suitable sqlg plugin for the JDBC URL: " + jdbcUrl);
@@ -266,12 +272,11 @@ public class SqlgGraph implements Graph {
                 }
 
                 this.sqlDialect = p.instantiateDialect();
-                this.sqlgDataSource = SqlgDataSource.setupDataSource(p.getDriverFor(jdbcUrl),
-                        this.configuration);
+                this.sqlgDataSource = dataSourceFactory.setup(p.getDriverFor(jdbcUrl), this.configuration);
             }
 
-            logger.debug(String.format("Opening graph. Connection url = %s, maxPoolSize = %d", this.configuration.getString(JDBC_URL), configuration.getInt("maxPoolSize", 100)));
-            try (Connection conn = this.sqlgDataSource.get(configuration.getString(JDBC_URL)).getConnection()) {
+            logger.debug(String.format("Opening graph. Connection url = %s, maxPoolSize = %d", this.getJdbcUrl(), configuration.getInt("maxPoolSize", 100)));
+            try (Connection conn = this.getConnection()) {
                 //This is used by Hsqldb to set the transaction semantics. MVCC and cache
                 this.sqlDialect.prepareDB(conn);
             }
@@ -351,7 +356,7 @@ public class SqlgGraph implements Graph {
             final Pair<Map<String, Object>, Map<String, Object>> keyValueMapPair = Pair.of(keyValueMapTriple.getMiddle(), keyValueMapTriple.getRight());
             final Map<String, PropertyType> columns = keyValueMapTriple.getLeft();
             final String label = ElementHelper.getLabelValue(keyValues).orElse(Vertex.DEFAULT_LABEL);
-            SchemaTable schemaTablePair = SchemaTable.from(this, label, this.getSqlDialect().getPublicSchema());
+            SchemaTable schemaTablePair = SchemaTable.from(this, label);
             this.tx().readWrite();
             this.getTopology().ensureVertexLabelExist(schemaTablePair.getSchema(), schemaTablePair.getTable(), columns);
             return new SqlgVertex(this, false, schemaTablePair.getSchema(), schemaTablePair.getTable(), keyValueMapPair);
@@ -398,7 +403,7 @@ public class SqlgGraph implements Graph {
 
     private SqlgVertex internalStreamTemporaryVertex(Object... keyValues) {
         final String label = ElementHelper.getLabelValue(keyValues).orElse(Vertex.DEFAULT_LABEL);
-        SchemaTable schemaTablePair = SchemaTable.from(this, label, this.getSqlDialect().getPublicSchema());
+        SchemaTable schemaTablePair = SchemaTable.from(this, label);
 
         SchemaTable streamingBatchModeVertexSchemaTable = this.tx().getBatchManager().getStreamingBatchModeVertexSchemaTable();
         if (streamingBatchModeVertexSchemaTable != null && !streamingBatchModeVertexSchemaTable.toString().equals(schemaTablePair.toString())) {
@@ -415,7 +420,7 @@ public class SqlgGraph implements Graph {
 
     private SqlgVertex internalStreamVertex(Object... keyValues) {
         final String label = ElementHelper.getLabelValue(keyValues).orElse(Vertex.DEFAULT_LABEL);
-        SchemaTable schemaTablePair = SchemaTable.from(this, label, this.getSqlDialect().getPublicSchema());
+        SchemaTable schemaTablePair = SchemaTable.from(this, label);
 
         SchemaTable streamingBatchModeVertexSchemaTable = this.tx().getBatchManager().getStreamingBatchModeVertexSchemaTable();
         if (streamingBatchModeVertexSchemaTable != null && !streamingBatchModeVertexSchemaTable.toString().equals(schemaTablePair.toString())) {
@@ -439,8 +444,8 @@ public class SqlgGraph implements Graph {
             throw SqlgExceptions.invalidMode(TRANSACTION_MUST_BE_IN + BatchManager.BatchModeType.STREAMING + " or " + BatchManager.BatchModeType.STREAMING_WITH_LOCK + " mode for bulkAddEdges");
         }
         if (!uids.isEmpty()) {
-            SchemaTable outSchemaTable = SchemaTable.from(this, outVertexLabel, this.sqlDialect.getPublicSchema());
-            SchemaTable inSchemaTable = SchemaTable.from(this, inVertexLabel, this.sqlDialect.getPublicSchema());
+            SchemaTable outSchemaTable = SchemaTable.from(this, outVertexLabel);
+            SchemaTable inSchemaTable = SchemaTable.from(this, inVertexLabel);
             sqlBulkDialect.bulkAddEdges(this, outSchemaTable, inSchemaTable, edgeLabel, idFields, uids);
         }
     }
@@ -513,7 +518,7 @@ public class SqlgGraph implements Graph {
         if (this.tx().isOpen())
             this.tx().close();
         this.topology.close();
-        this.sqlgDataSource.close(this.getJdbcUrl());
+        this.sqlgDataSource.close();
     }
 
     @Override
@@ -1065,7 +1070,7 @@ public class SqlgGraph implements Graph {
 
     public void createVertexLabeledIndex(String label, Object... dummykeyValues) {
         Map<String, PropertyType> columns = SqlgUtil.transformToColumnDefinitionMap(dummykeyValues);
-        SchemaTable schemaTablePair = SchemaTable.from(this, label, this.getSqlDialect().getPublicSchema());
+        SchemaTable schemaTablePair = SchemaTable.from(this, label);
         VertexLabel vertexLabel = this.getTopology().ensureVertexLabelExist(schemaTablePair.getSchema(), schemaTablePair.getTable(), columns);
         List<PropertyColumn> properties = new ArrayList<>();
         List<String> keys = SqlgUtil.transformToKeyList(dummykeyValues);
@@ -1089,7 +1094,7 @@ public class SqlgGraph implements Graph {
         long count = 0;
         Set<String> tables = this.getTopology().getAllTables().keySet();
         for (String table : tables) {
-            SchemaTable schemaTable = SchemaTable.from(this, table, this.getSqlDialect().getPublicSchema());
+            SchemaTable schemaTable = SchemaTable.from(this, table);
             if (returnVertices ? schemaTable.isVertexTable() : !schemaTable.isVertexTable()) {
                 StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM ");
                 sql.append("\"");
@@ -1202,7 +1207,7 @@ public class SqlgGraph implements Graph {
             //TODO use a union query
             Set<String> tables = this.getTopology().getAllTables().keySet();
             for (String table : tables) {
-                SchemaTable schemaTable = SchemaTable.from(this, table, this.getSqlDialect().getPublicSchema());
+                SchemaTable schemaTable = SchemaTable.from(this, table);
                 if (returnVertices ? schemaTable.isVertexTable() : !schemaTable.isVertexTable()) {
                     StringBuilder sql = new StringBuilder("SELECT * FROM ");
                     sql.append("\"");
@@ -1238,6 +1243,10 @@ public class SqlgGraph implements Graph {
             }
         }
         return sqlgElements;
+    }
+
+    public Connection getConnection() throws SQLException {
+        return this.sqlgDataSource.getDatasource().getConnection();
     }
 
     public SqlgDataSource getSqlgDataSource() {

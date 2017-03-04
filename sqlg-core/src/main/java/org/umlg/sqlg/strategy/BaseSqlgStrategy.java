@@ -23,6 +23,8 @@ import org.apache.tinkerpop.gremlin.process.traversal.step.util.ElementValueComp
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.EmptyStep;
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
 import org.apache.tinkerpop.gremlin.process.traversal.strategy.AbstractTraversalStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.util.AndP;
+import org.apache.tinkerpop.gremlin.process.traversal.util.ConnectiveP;
 import org.apache.tinkerpop.gremlin.process.traversal.util.OrP;
 import org.apache.tinkerpop.gremlin.process.traversal.util.TraversalHelper;
 import org.apache.tinkerpop.gremlin.structure.Element;
@@ -30,6 +32,7 @@ import org.apache.tinkerpop.gremlin.structure.T;
 import org.javatuples.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.umlg.sqlg.predicate.FullText;
 import org.umlg.sqlg.predicate.Text;
 import org.umlg.sqlg.sql.parse.ReplacedStep;
 import org.umlg.sqlg.structure.SqlgGraph;
@@ -39,6 +42,7 @@ import java.time.Period;
 import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -52,6 +56,8 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
     private static final String SQLG_PATH_FAKE_LABEL = "sqlgPathFakeLabel";
     private static final List<BiPredicate> SUPPORTED_BI_PREDICATE = Arrays.asList(
             Compare.eq, Compare.neq, Compare.gt, Compare.gte, Compare.lt, Compare.lte);
+    protected static List<Class> UNOPTIMIZABLE_STEPS = Arrays.asList(
+            Order.class, LambdaCollectingBarrierStep.class, SackValueStep.class, SackStep.class);
 
     BaseSqlgStrategy() {
     }
@@ -95,6 +101,7 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
                 }
             } else if (step instanceof ChooseStep) {
                 try {
+                    //Only optimize ChooseSteps where the predicate is the same as the true traversal
                     chooseStepAdded = flattenChooseStep(steps, stepIterator, (ChooseStep) step, traversal);
                 } catch (UnoptimizableException e) {
                     //swallow as it is used for process flow only.
@@ -121,11 +128,11 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
                     pathCount++;
 
                     @SuppressWarnings("OptionalGetWithoutIsPresent")
-                    ReplacedStep replacedStep = ReplacedStep.from(((SqlgGraph)traversal.getGraph().get()).getTopology(), (AbstractStep) step, pathCount);
+                    ReplacedStep replacedStep = ReplacedStep.from(((SqlgGraph) traversal.getGraph().get()).getTopology(), (AbstractStep) step, pathCount);
                     if (sqlgStep == null || step instanceof GraphStep) {
                         sqlgStep = constructSqlgStep(traversal, step);
-                        if (previous!=null){
-                        	sqlgStep.setPreviousStep(previous);
+                        if (previous != null) {
+                            sqlgStep.setPreviousStep(previous);
                         }
                         alreadyReplacedGraphStep = alreadyReplacedGraphStep || step instanceof GraphStep;
                         //TODO this suck but brain is stuck.
@@ -181,7 +188,7 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
                         pathCount++;
                     }
                     if (replacedStep.getLabels().isEmpty()) {
-                        boolean precedesPathStep = precedesPathOrTreeStep(traversal, steps, stepIterator.nextIndex());
+                        boolean precedesPathStep = precedesPathOrTreeStep(traversal);
                         if (precedesPathStep) {
                             replacedStep.addLabel(pathCount + BaseSqlgStrategy.PATH_LABEL_SUFFIX + BaseSqlgStrategy.SQLG_PATH_FAKE_LABEL);
                         }
@@ -216,11 +223,19 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
         Preconditions.checkState(step instanceof ChooseStep, "Expected ChooseStep, found " + step.getClass().getSimpleName() + " instead. BUG!");
         ChooseStep chooseStep = (ChooseStep) step;
 
+
         List<Traversal.Admin<?, ?>> traversalAdmins = chooseStep.getGlobalChildren();
-        Preconditions.checkState(traversalAdmins.size() == 2);
+        if (traversalAdmins.size() != 2) {
+            return true;
+        }
 
         Traversal.Admin<?, ?> predicate = (Traversal.Admin<?, ?>) chooseStep.getLocalChildren().get(0);
         List<Step> predicateSteps = new ArrayList<>(predicate.getSteps());
+
+        if (predicateSteps.stream().anyMatch(s -> s instanceof OrderGlobalStep)) {
+            return true;
+        }
+
         predicateSteps.remove(predicate.getSteps().size() - 1);
 
         Traversal.Admin<?, ?> globalChildOne = (Traversal.Admin<?, ?>) chooseStep.getGlobalChildren().get(0);
@@ -299,78 +314,239 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
                         s.getClass().equals(SackStep.class));
     }
 
-    private boolean precedesPathOrTreeStep(Traversal.Admin<?, ?> traversal, List<Step> steps, int index) {
-        if (traversal.getParent() != null && traversal.getParent() instanceof LocalStep) {
-            LocalStep localStep = (LocalStep) traversal.getParent();
-            if (precedesPathOrTreeStep(localStep.getTraversal(), localStep.getTraversal().getSteps(), 0)) {
+    boolean canNotBeOptimized(final Traversal.Admin<?, ?> traversal) {
+        for (Class unoptimizableStep : UNOPTIMIZABLE_STEPS) {
+            if (!TraversalHelper.getStepsOfAssignableClassRecursively(unoptimizableStep, traversal).isEmpty()) {
                 return true;
             }
         }
-        List<Step> toCome = steps.subList(index, steps.size());
-        return toCome.stream().anyMatch(s ->
-                (s.getClass().equals(PathStep.class) ||
-                        s.getClass().equals(TreeStep.class) ||
-                        s.getClass().equals(TreeSideEffectStep.class) ||
-                        s.getClass().equals(CyclicPathStep.class) ||
-                        s.getClass().equals(SimplePathStep.class) ||
-                        s.getClass().equals(EdgeOtherVertexStep.class)));
+        return false;
+    }
+
+    private boolean precedesPathOrTreeStep(Traversal.Admin<?, ?> traversal) {
+        if (traversal.getParent() != null && traversal.getParent() instanceof LocalStep) {
+            LocalStep localStep = (LocalStep) traversal.getParent();
+            if (precedesPathOrTreeStep(localStep.getTraversal())) {
+                return true;
+            }
+        }
+        Predicate p = s -> s.getClass().equals(PathStep.class) ||
+                s.getClass().equals(TreeStep.class) ||
+                s.getClass().equals(TreeSideEffectStep.class) ||
+                s.getClass().equals(CyclicPathStep.class) ||
+                s.getClass().equals(SimplePathStep.class) ||
+                s.getClass().equals(EdgeOtherVertexStep.class);
+        return TraversalHelper.anyStepRecursively(p, traversal);
     }
 
     private void collectHasSteps(ListIterator<Step> iterator, Traversal.Admin<?, ?> traversal, ReplacedStep<?, ?> replacedStep, int pathCount) {
         //Collect the hasSteps
         while (iterator.hasNext()) {
             Step<?, ?> currentStep = iterator.next();
-            if (currentStep instanceof HasContainerHolder && isNotZonedDateTimeOrPeriodOrDuration((HasContainerHolder) currentStep) &&
-                    (isSingleBiPredicate(((HasContainerHolder) currentStep).getHasContainers()) ||
-                            isBetween(((HasContainerHolder) currentStep).getHasContainers()) ||
-                            isInside(((HasContainerHolder) currentStep).getHasContainers()) ||
-                            isOutside(((HasContainerHolder) currentStep).getHasContainers()) ||
-                            isWithinOut(((HasContainerHolder) currentStep).getHasContainers()) ||
-                            isTextContains(((HasContainerHolder) currentStep).getHasContainers()))) {
-
-                if (!currentStep.getLabels().isEmpty()) {
-                    final IdentityStep identityStep = new IdentityStep<>(traversal);
-                    currentStep.getLabels().forEach(l -> replacedStep.addLabel(pathCount + BaseSqlgStrategy.PATH_LABEL_SUFFIX + l));
-                    TraversalHelper.insertAfterStep(identityStep, currentStep, traversal);
+            if (currentStep instanceof HasContainerHolder) {
+                HasContainerHolder hasContainerHolder = (HasContainerHolder) currentStep;
+                List<HasContainer> hasContainers = hasContainerHolder.getHasContainers();
+                List<HasContainer> toRemoveHasContainers = new ArrayList<>();
+                if (isNotZonedDateTimeOrPeriodOrDuration(hasContainerHolder)) {
+                    toRemoveHasContainers.addAll(optimizeHas(replacedStep, hasContainers));
+                    toRemoveHasContainers.addAll(optimizeWithInOut(replacedStep, hasContainers));
+                    toRemoveHasContainers.addAll(optimizeBetween(replacedStep, hasContainers));
+                    toRemoveHasContainers.addAll(optimizeInside(replacedStep, hasContainers));
+                    toRemoveHasContainers.addAll(optimizeOutside(replacedStep, hasContainers));
+                    toRemoveHasContainers.addAll(optimizeTextContains(replacedStep, hasContainers));
+                    if (toRemoveHasContainers.size() == hasContainers.size()) {
+                        if (!currentStep.getLabels().isEmpty()) {
+                            final IdentityStep identityStep = new IdentityStep<>(traversal);
+                            currentStep.getLabels().forEach(l -> replacedStep.addLabel(pathCount + BaseSqlgStrategy.PATH_LABEL_SUFFIX + l));
+                            TraversalHelper.insertAfterStep(identityStep, currentStep, traversal);
+                        }
+                        if (traversal.getSteps().contains(currentStep)) {
+                            traversal.removeStep(currentStep);
+                        }
+                        iterator.remove();
+                    }
                 }
-                iterator.remove();
-                //TODO stengthen this if statement.
-                //The step is not present for ChooseSteps as the currentStep is nested inside the ChooserStep which has already been removed.
-                //The same should be true for RepeatStep only currently do not optimize if there is a HasStep in the nested traversal.
-                if (traversal.getSteps().contains(currentStep)) {
-                    traversal.removeStep(currentStep);
-                }
-                replacedStep.addHasContainers(((HasContainerHolder) currentStep).getHasContainers());
             } else if (currentStep instanceof IdentityStep) {
                 // do nothing
             } else {
                 iterator.previous();
                 break;
             }
+
+//            if (currentStep instanceof HasContainerHolder && isNotZonedDateTimeOrPeriodOrDuration((HasContainerHolder) currentStep) &&
+//                    (isSingleBiPredicate(((HasContainerHolder) currentStep).getHasContainers()) ||
+//                            isBetween(((HasContainerHolder) currentStep).getHasContainers()) ||
+//                            isInside(((HasContainerHolder) currentStep).getHasContainers()) ||
+//                            isOutside(((HasContainerHolder) currentStep).getHasContainers()) ||
+//                            isWithinOut(((HasContainerHolder) currentStep).getHasContainers()) ||
+//                            isTextContains(((HasContainerHolder) currentStep).getHasContainers()))) {
+//
+//                if (!currentStep.getLabels().isEmpty()) {
+//                    final IdentityStep identityStep = new IdentityStep<>(traversal);
+//                    currentStep.getLabels().forEach(l -> replacedStep.addLabel(pathCount + BaseSqlgStrategy.PATH_LABEL_SUFFIX + l));
+//                    TraversalHelper.insertAfterStep(identityStep, currentStep, traversal);
+//                }
+//                iterator.remove();
+//                //TODO strengthen this if statement.
+//                //The step is not present for ChooseSteps as the currentStep is nested inside the ChooserStep which has already been removed.
+//                //The same should be true for RepeatStep only currently do not optimize if there is a HasStep in the nested traversal.
+//                if (traversal.getSteps().contains(currentStep)) {
+//                    traversal.removeStep(currentStep);
+//                }
+//                replacedStep.addHasContainers(((HasContainerHolder) currentStep).getHasContainers());
+//            } else if (currentStep instanceof IdentityStep) {
+//                // do nothing
+//            } else {
+//                iterator.previous();
+//                break;
+//            }
         }
     }
 
     protected boolean isNotZonedDateTimeOrPeriodOrDuration(HasContainerHolder currentStep) {
-        return currentStep.getHasContainers().stream().filter(
-                h -> h.getPredicate().getValue() instanceof ZonedDateTime ||
-                        h.getPredicate().getValue() instanceof Period ||
-                        h.getPredicate().getValue() instanceof Duration ||
-                        (h.getPredicate().getValue() instanceof List && (
-                                ((List) h.getPredicate().getValue()).stream().anyMatch(v -> v instanceof ZonedDateTime) ||
-                                        ((List) h.getPredicate().getValue()).stream().anyMatch(v -> v instanceof Period) ||
-                                        ((List) h.getPredicate().getValue()).stream().anyMatch(v -> v instanceof Duration)))
-        ).count() < 1;
+        for (HasContainer h : currentStep.getHasContainers()) {
+            P<?> predicate = h.getPredicate();
+            if (predicate.getValue() instanceof ZonedDateTime ||
+                    predicate.getValue() instanceof Period ||
+                    predicate.getValue() instanceof Duration ||
+                    (predicate.getValue() instanceof List && containsZonedDateTimePeriodOrDuration((List<Object>) predicate.getValue())) ||
+                    (predicate instanceof ConnectiveP && isConnectivePWithZonedDateTimePeriodOrDuration((ConnectiveP) h.getPredicate()))) {
+
+
+                return false;
+            }
+
+        }
+        return true;
     }
 
+    private boolean containsZonedDateTimePeriodOrDuration(List<Object> values) {
+        for (Object value : values) {
+            if (value instanceof ZonedDateTime ||
+                    value instanceof Period ||
+                    value instanceof Duration) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isConnectivePWithZonedDateTimePeriodOrDuration(ConnectiveP connectiveP) {
+        List<P<?>> ps = connectiveP.getPredicates();
+        for (P<?> predicate : ps) {
+            if (predicate.getValue() instanceof ZonedDateTime ||
+                    predicate.getValue() instanceof Period ||
+                    predicate.getValue() instanceof Duration) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<HasContainer> optimizeWithInOut(ReplacedStep<?, ?> replacedStep, List<HasContainer> hasContainers) {
+        List<HasContainer> result = new ArrayList<>();
+        for (HasContainer hasContainer : hasContainers) {
+            if (!hasContainer.getKey().equals(T.label.getAccessor()) &&
+                    (hasContainer.getBiPredicate() == Contains.without || hasContainer.getBiPredicate() == Contains.within)) {
+
+                replacedStep.addHasContainer(hasContainer);
+                result.add(hasContainer);
+            }
+        }
+        return result;
+    }
+
+    private List<HasContainer> optimizeHas(ReplacedStep<?, ?> replacedStep, List<HasContainer> hasContainers) {
+        List<HasContainer> result = new ArrayList<>();
+        for (HasContainer hasContainer : hasContainers) {
+            if (SUPPORTED_BI_PREDICATE.contains(hasContainer.getBiPredicate())) {
+                replacedStep.addHasContainer(hasContainer);
+                result.add(hasContainer);
+            }
+        }
+        return result;
+    }
+
+    private List<HasContainer> optimizeBetween(ReplacedStep<?, ?> replacedStep, List<HasContainer> hasContainers) {
+        List<HasContainer> result = new ArrayList<>();
+        for (HasContainer hasContainer : hasContainers) {
+            if (hasContainer.getPredicate() instanceof AndP) {
+                AndP<?> andP = (AndP) hasContainer.getPredicate();
+                List<? extends P<?>> predicates = andP.getPredicates();
+                if (predicates.size() == 2) {
+                    if (predicates.get(0).getBiPredicate() == Compare.gte && predicates.get(1).getBiPredicate() == Compare.lt) {
+                        replacedStep.addHasContainer(hasContainer);
+                        result.add(hasContainer);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<HasContainer> optimizeInside(ReplacedStep<?, ?> replacedStep, List<HasContainer> hasContainers) {
+        List<HasContainer> result = new ArrayList<>();
+        for (HasContainer hasContainer : hasContainers) {
+            if (hasContainer.getPredicate() instanceof AndP) {
+                AndP<?> andP = (AndP) hasContainer.getPredicate();
+                List<? extends P<?>> predicates = andP.getPredicates();
+                if (predicates.size() == 2) {
+                    if (predicates.get(0).getBiPredicate() == Compare.gt && predicates.get(1).getBiPredicate() == Compare.lt) {
+                        replacedStep.addHasContainer(hasContainer);
+                        result.add(hasContainer);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<HasContainer> optimizeOutside(ReplacedStep<?, ?> replacedStep, List<HasContainer> hasContainers) {
+        List<HasContainer> result = new ArrayList<>();
+        for (HasContainer hasContainer : hasContainers) {
+            if (hasContainer.getPredicate() instanceof OrP) {
+                OrP<?> orP = (OrP) hasContainer.getPredicate();
+                List<? extends P<?>> predicates = orP.getPredicates();
+                if (predicates.size() == 2) {
+                    if (predicates.get(0).getBiPredicate() == Compare.lt && predicates.get(1).getBiPredicate() == Compare.gt) {
+                        replacedStep.addHasContainer(hasContainer);
+                        result.add(hasContainer);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<HasContainer> optimizeTextContains(ReplacedStep<?, ?> replacedStep, List<HasContainer> hasContainers) {
+        List<HasContainer> result = new ArrayList<>();
+        for (HasContainer hasContainer : hasContainers) {
+            if (hasContainer.getBiPredicate() instanceof Text ||
+                    hasContainer.getBiPredicate() instanceof FullText
+                    ) {
+                replacedStep.addHasContainer(hasContainer);
+                result.add(hasContainer);
+            }
+        }
+        return result;
+    }
+
+    private boolean isTextContains(List<HasContainer> hasContainers) {
+        return (hasContainers.size() == 1 && !hasContainers.get(0).getKey().equals(T.label.getAccessor()) &&
+                !hasContainers.get(0).getKey().equals(T.id.getAccessor()) &&
+                (hasContainers.get(0).getBiPredicate() instanceof Text ||
+                        hasContainers.get(0).getBiPredicate() instanceof FullText
+                ));
+    }
 
     static boolean isElementValueComparator(OrderGlobalStep orderGlobalStep) {
         return orderGlobalStep.getComparators().stream().allMatch(c -> (c instanceof ElementValueComparator
                 && (((ElementValueComparator) c).getValueComparator() == Order.incr ||
                 ((ElementValueComparator) c).getValueComparator() == Order.decr))
-        		|| (c instanceof Pair<?,?> 
-        				&& ((Pair<?,?>)c).getValue0() instanceof ElementValueTraversal<?>
-        				&& ((Pair<?,?>)c).getValue1() instanceof Order)
-        		);
+                || (c instanceof Pair<?, ?>
+                && ((Pair<?, ?>) c).getValue0() instanceof ElementValueTraversal<?>
+                && ((Pair<?, ?>) c).getValue1() instanceof Order)
+        );
     }
 
     static boolean isTraversalComparatorWithSelectOneStep(OrderGlobalStep orderGlobalStep) {
@@ -430,19 +606,6 @@ public abstract class BaseSqlgStrategy extends AbstractTraversalStrategy<Travers
                 (hasContainers.get(0).getBiPredicate() == Contains.without || hasContainers.get(0).getBiPredicate() == Contains.within));
     }
 
-    private boolean isTextContains(List<HasContainer> hasContainers) {
-        return (hasContainers.size() == 1 && !hasContainers.get(0).getKey().equals(T.label.getAccessor()) &&
-                !hasContainers.get(0).getKey().equals(T.id.getAccessor()) &&
-                (hasContainers.get(0).getBiPredicate() == Text.contains ||
-                        hasContainers.get(0).getBiPredicate() == Text.ncontains ||
-                        hasContainers.get(0).getBiPredicate() == Text.containsCIS ||
-                        hasContainers.get(0).getBiPredicate() == Text.ncontainsCIS ||
-                        hasContainers.get(0).getBiPredicate() == Text.startsWith ||
-                        hasContainers.get(0).getBiPredicate() == Text.nstartsWith ||
-                        hasContainers.get(0).getBiPredicate() == Text.endsWith ||
-                        hasContainers.get(0).getBiPredicate() == Text.nendsWith
-                ));
-    }
 
     private boolean flattenChooseStep(List<Step> steps, ListIterator<Step> stepIterator, ChooseStep chooseStep, Traversal.Admin<?, ?> traversal) {
         int stepsAdded = 0;

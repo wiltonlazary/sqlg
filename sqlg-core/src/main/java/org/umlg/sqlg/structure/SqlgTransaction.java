@@ -53,7 +53,7 @@ public class SqlgTransaction extends AbstractThreadLocalTransaction {
             throw Transaction.Exceptions.transactionAlreadyOpen();
         else {
             try {
-                Connection connection = this.sqlgGraph.getSqlgDataSource().get(this.sqlgGraph.getJdbcUrl()).getConnection();
+                Connection connection = this.sqlgGraph.getConnection();
                 connection.setAutoCommit(false);
                 if (this.sqlgGraph.getSqlDialect().supportsClientInfo()) {
                     connection.setClientInfo("ApplicationName", Thread.currentThread().getName());
@@ -278,7 +278,7 @@ public class SqlgTransaction extends AbstractThreadLocalTransaction {
     }
     
     /**
-     * are we reading the SQL query results laszily?
+     * are we reading the SQL query results lazily?
      * @return true if we are processing the results lazily, false otherwise
      */
     public boolean isLazyQueries(){

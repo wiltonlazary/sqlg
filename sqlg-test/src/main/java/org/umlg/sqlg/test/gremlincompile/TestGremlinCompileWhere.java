@@ -1,13 +1,17 @@
 package org.umlg.sqlg.test.gremlincompile;
 
 import org.apache.tinkerpop.gremlin.process.traversal.P;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
-import org.umlg.sqlg.predicate.Text;
+import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.test.BaseTest;
 
+import java.beans.PropertyVetoException;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 
@@ -16,356 +20,526 @@ import java.util.List;
  */
 public class TestGremlinCompileWhere extends BaseTest {
 
+    @BeforeClass
+    public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
+        BaseTest.beforeClass();
+        if (configuration.getString("jdbc.url").contains("postgresql")) {
+            configuration.addProperty("distributed", true);
+        }
+    }
+
     @Test
-    public void testEquals() {
+    public void testEquals() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "name", "johnny");
         this.sqlgGraph.addVertex(T.label, "Person", "name", "pietie");
         this.sqlgGraph.addVertex(T.label, "Person", "name", "koosie");
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", P.eq("johnny")).toList();
+        testEquals_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testEquals_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testEquals_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("name", P.eq("johnny"));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", P.eq("johnnyxxx")).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("name", P.eq("johnnyxxx"));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(0, vertices.size());
     }
 
     @Test
-    public void testNotEquals() {
+    public void testNotEquals() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "name", "johnny");
         this.sqlgGraph.addVertex(T.label, "Person", "name", "pietie");
         this.sqlgGraph.addVertex(T.label, "Person", "name", "koosie");
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", P.neq("johnny")).toList();
+        testNotEquals_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testNotEquals_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testNotEquals_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("name", P.neq("johnny"));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", P.neq("johnnyxxx")).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("name", P.neq("johnnyxxx"));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(3, vertices.size());
     }
 
     @Test
-    public void testBiggerThan() {
+    public void testBiggerThan() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gt(0)).toList();
+        testBiggerThan_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testBiggerThan_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testBiggerThan_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gt(0));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gt(1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gt(1));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gt(2)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gt(2));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gt(3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gt(3));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(0, vertices.size());
     }
 
     @Test
-    public void testBiggerEqualsTo() {
+    public void testBiggerEqualsTo() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gte(0)).toList();
+        testBiggerEqualsTo_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testBiggerEqualsTo_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testBiggerEqualsTo_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gte(0));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gte(1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gte(1));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gte(2)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gte(2));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gte(3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gte(3));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.gte(4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal4 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.gte(4));
+        Assert.assertEquals(2, traversal4.getSteps().size());
+        vertices = traversal4.toList();
+        Assert.assertEquals(1, traversal4.getSteps().size());
         Assert.assertEquals(0, vertices.size());
     }
 
     @Test
-    public void testSmallerThan() {
+    public void testSmallerThan() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lt(0)).toList();
+        testSmallerThan_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testSmallerThan_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testSmallerThan_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lt(0));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lt(1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lt(1));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lt(2)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lt(2));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lt(3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lt(3));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lt(4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal4 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lt(4));
+        Assert.assertEquals(2, traversal4.getSteps().size());
+        vertices = traversal4.toList();
+        Assert.assertEquals(1, traversal4.getSteps().size());
         Assert.assertEquals(3, vertices.size());
     }
 
     @Test
-    public void testLessThanEqualsTo() {
+    public void testLessThanEqualsTo() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lte(0)).toList();
+        testLessThanEqualsTo_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testLessThanEqualsTo_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testLessThanEqualsTo_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lte(0));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lte(1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lte(1));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lte(2)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lte(2));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lte(3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lte(3));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.lte(4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal4 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.lte(4));
+        Assert.assertEquals(2, traversal4.getSteps().size());
+        vertices = traversal4.toList();
+        Assert.assertEquals(1, traversal4.getSteps().size());
         Assert.assertEquals(3, vertices.size());
     }
 
     //Note gremlin between is >= and <
     @Test
-    public void testBetween() {
+    public void testBetween() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.between(0, 4)).toList();
+        testBetween_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testBetween_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testBetween_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal().
+                V().hasLabel("Person").has("age", P.between(0, 4));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.between(1, 4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.between(1, 4));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.between(1, 3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.between(1, 3));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.between(1, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.between(1, 1));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(0, vertices.size());
     }
 
     @Test
-    public void testInside() {
+    public void testInside() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.inside(0, 4)).toList();
+        testInside_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testInside_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testInside_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.inside(0, 4));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.inside(1, 4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.inside(1, 4));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.inside(1, 3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal().V().hasLabel("Person").has("age", P.inside(1, 3));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.inside(1, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.inside(1, 1));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(0, vertices.size());
     }
 
     @Test
-    public void testOutside() {
+    public void testOutside() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.outside(0, 4)).toList();
+        testOutside_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testOutside_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testOutside_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.outside(0, 4));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.outside(1, 4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.outside(1, 4));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.outside(1, 3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.outside(1, 3));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.outside(1, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.outside(1, 1));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(2, vertices.size());
     }
 
     @Test
-    public void testWithin() {
+    public void testWithin() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(1, 2, 3)).toList();
+        testWithin_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testWithin_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testWithin_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(1, 2, 3));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(0, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(0, 1));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(1, 3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(1, 3));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(1, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(1, 1));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(3, 4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal4 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(3, 4));
+        Assert.assertEquals(2, traversal4.getSteps().size());
+        vertices = traversal4.toList();
+        Assert.assertEquals(1, traversal4.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(4, 5)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal5 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(4, 5));
+        Assert.assertEquals(2, traversal5.getSteps().size());
+        vertices = traversal5.toList();
+        Assert.assertEquals(1, traversal5.getSteps().size());
         Assert.assertEquals(0, vertices.size());
     }
 
     @Test
-    public void testWithout() {
+    public void testWithout() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.without(1, 2, 3)).toList();
+        testWithout_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testWithout_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testWithout_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.without(1, 2, 3));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.without(0, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal1 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.without(0, 1));
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        vertices = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.without(1, 3)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal2 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal().
+                V().hasLabel("Person").has("age", P.without(1, 3));
+        Assert.assertEquals(2, traversal2.getSteps().size());
+        vertices = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.without(1, 1)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal3 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.without(1, 1));
+        Assert.assertEquals(2, traversal3.getSteps().size());
+        vertices = traversal3.toList();
+        Assert.assertEquals(1, traversal3.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.without(3, 4)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal4 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.without(3, 4));
+        Assert.assertEquals(2, traversal4.getSteps().size());
+        vertices = traversal4.toList();
+        Assert.assertEquals(1, traversal4.getSteps().size());
         Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.without(4, 5)).toList();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal5 = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.without(4, 5));
+        Assert.assertEquals(2, traversal5.getSteps().size());
+        vertices = traversal5.toList();
+        Assert.assertEquals(1, traversal5.getSteps().size());
         Assert.assertEquals(3, vertices.size());
     }
 
     @Test
-    public void testEmptyWithin() {
+    public void testEmptyWithin() throws InterruptedException {
         this.sqlgGraph.addVertex(T.label, "Person", "age", 1);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 2);
         this.sqlgGraph.addVertex(T.label, "Person", "age", 3);
         this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("age", P.within(Collections.emptyList())).toList();
+        testEmptyWithin_assert(this.sqlgGraph);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testEmptyWithin_assert(this.sqlgGraph1);
+        }
+    }
+
+    private void testEmptyWithin_assert(SqlgGraph sqlgGraph) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("age", P.within(Collections.emptyList()));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(1, traversal.getSteps().size());
         Assert.assertEquals(0, vertices.size());
-    }
-
-    @Test
-    public void testTextContains() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("a")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("aaa")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("abc")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("acd")).toList();
-        Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("ohn")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("Ohn")).toList();
-        Assert.assertEquals(0, vertices.size());
-    }
-
-    @Test
-    public void showTextPredicate() {
-        Vertex john = this.sqlgGraph.addVertex(T.label, "Person", "name", "John XXX Doe");
-        Vertex peter = this.sqlgGraph.addVertex(T.label, "Person", "name", "Peter YYY Snow");
-        this.sqlgGraph.tx().commit();
-
-        List<Vertex> persons = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.contains("XXX")).toList();
-        Assert.assertEquals(1, persons.size());
-        Assert.assertEquals(john, persons.get(0));
-    }
-
-    @Test
-    public void testTextNotContains() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontains("a")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontains("aaa")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontains("abc")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontains("acd")).toList();
-        Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontains("ohn")).toList();
-        Assert.assertEquals(2, vertices.size());
-    }
-
-    @Test
-    public void testTextContainsCIS() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.containsCIS("A")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.containsCIS("AAA")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.containsCIS("ABC")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.containsCIS("ACD")).toList();
-        Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.containsCIS("OHN")).toList();
-        Assert.assertEquals(1, vertices.size());
-    }
-
-    @Test
-    public void testTextNContainsCIS() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontainsCIS("A")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontainsCIS("AAA")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontainsCIS("ABC")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontainsCIS("ACD")).toList();
-        Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.ncontainsCIS("OHN")).toList();
-        Assert.assertEquals(2, vertices.size());
-    }
-
-    @Test
-    public void testTextStartsWith() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.startsWith("a")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.startsWith("aaa")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.startsWith("abc")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.startsWith("acd")).toList();
-        Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.startsWith("ohn")).toList();
-        Assert.assertEquals(0, vertices.size());
-    }
-
-    @Test
-    public void testTextNStartsWith() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nstartsWith("a")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nstartsWith("aaa")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nstartsWith("abc")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nstartsWith("acd")).toList();
-        Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nstartsWith("ohn")).toList();
-        Assert.assertEquals(3, vertices.size());
-    }
-
-    @Test
-    public void testTextEndsWith() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.endsWith("a")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.endsWith("aaa")).toList();
-        Assert.assertEquals(1, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.endsWith("abc")).toList();
-        Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.endsWith("acd")).toList();
-        Assert.assertEquals(0, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.endsWith("ohn")).toList();
-        Assert.assertEquals(1, vertices.size());
-    }
-
-    @Test
-    public void testTextNEndsWith() {
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "aaaaa");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "abcd");
-        this.sqlgGraph.addVertex(T.label, "Person", "name", "john");
-        this.sqlgGraph.tx().commit();
-        List<Vertex> vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nendsWith("a")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nendsWith("aaa")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nendsWith("abc")).toList();
-        Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nendsWith("acd")).toList();
-        Assert.assertEquals(3, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nendsWith("ohn")).toList();
-        Assert.assertEquals(2, vertices.size());
-        vertices = this.sqlgGraph.traversal().V().hasLabel("Person").has("name", Text.nendsWith("D")).toList();
-        Assert.assertEquals(3, vertices.size());
     }
 
 }

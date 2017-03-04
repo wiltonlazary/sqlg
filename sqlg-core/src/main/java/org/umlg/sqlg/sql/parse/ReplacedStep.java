@@ -517,13 +517,16 @@ public class ReplacedStep<S, E> {
         List<HasContainer> hasContainersWithoutLabel = this.hasContainers.stream().filter(h -> !h.getKey().equals(T.label.getAccessor())).collect(Collectors.toList());
         List<HasContainer> hasContainersWithLabel = this.hasContainers.stream().filter(h -> h.getKey().equals(T.label.getAccessor())).collect(Collectors.toList());
 
+        Set<Integer> hashCodes = hasContainersWithLabel.stream().map(HasContainer::hashCode).collect(Collectors.toSet());
+        hasContainersWithLabel = hasContainersWithLabel.stream().filter(h -> hashCodes.remove(h.hashCode())).collect(Collectors.toList());
+
         if (hasContainersWithLabel.isEmpty()) {
             //this means all vertices or edges except for as filtered by the TopologyStrategy
             filteredAllTables.forEach((t, p) -> {
                 if ((graphStep.getReturnClass().isAssignableFrom(Vertex.class) && t.substring(t.indexOf(".") + 1).startsWith(SchemaManager.VERTEX_PREFIX)) ||
                         (graphStep.getReturnClass().isAssignableFrom(Edge.class) && t.substring(t.indexOf(".") + 1).startsWith(SchemaManager.EDGE_PREFIX))) {
 
-                    SchemaTable schemaTable = SchemaTable.from(sqlgGraph, t, sqlgGraph.getSqlDialect().getPublicSchema());
+                    SchemaTable schemaTable = SchemaTable.from(sqlgGraph, t);
                     SchemaTableTree schemaTableTree = new SchemaTableTree(
                             sqlgGraph,
                             schemaTable,
@@ -551,7 +554,7 @@ public class ReplacedStep<S, E> {
                 boolean isVertex = graphStep.getReturnClass().isAssignableFrom(Vertex.class);
                 SchemaTable schemaTable = SqlgUtil.parseLabelMaybeNoSchema(sqlgGraph, tbl);
                 String table = (isVertex ? SchemaManager.VERTEX_PREFIX : SchemaManager.EDGE_PREFIX) + schemaTable.getTable();
-                SchemaTable schemaTableWithPrefix = SchemaTable.from(sqlgGraph, schemaTable.getSchema() == null ? table : schemaTable.getSchema() + "." + table, sqlgGraph.getSqlDialect().getPublicSchema());
+                SchemaTable schemaTableWithPrefix = SchemaTable.from(sqlgGraph, schemaTable.getSchema() == null ? table : schemaTable.getSchema() + "." + table);
                 // all potential tables
                 Set<SchemaTable> potentialsTables = new HashSet<>();
                 potentialsTables.add(schemaTableWithPrefix);
@@ -559,7 +562,7 @@ public class ReplacedStep<S, E> {
                 if (!isVertex && !tbl.contains(".")) {
                     for (String key : filteredAllTables.keySet()) {
                         if (key.endsWith("." + table)) {
-                            potentialsTables.add(SchemaTable.from(sqlgGraph, key, sqlgGraph.getSqlDialect().getPublicSchema()));
+                            potentialsTables.add(SchemaTable.from(sqlgGraph, key));
                         }
                     }
                 }
@@ -599,8 +602,6 @@ public class ReplacedStep<S, E> {
             }
         }
         this.hasContainers.removeAll(toRemove);
-        SqlgUtil.removeTopologyStrategyHasContainer(this.hasContainers);
-
         return result;
     }
 
@@ -674,6 +675,13 @@ public class ReplacedStep<S, E> {
      */
     public void addHasContainers(List<HasContainer> hasContainers) {
         this.hasContainers.addAll(hasContainers);
+    }
+
+    /**
+     * @param hasContainer A hasContainer for this step. Copied from the original step.
+     */
+    public void addHasContainer(HasContainer hasContainer) {
+        this.hasContainers.add(hasContainer);
     }
 
     public Range<Long> getRange() {

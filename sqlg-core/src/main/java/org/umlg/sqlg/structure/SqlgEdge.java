@@ -215,7 +215,25 @@ public class SqlgEdge extends SqlgElement implements Edge {
                 throw new IllegalStateException("streaming is in progress, first flush or commit before querying.");
             }
 
-            StringBuilder sql = new StringBuilder("SELECT * FROM ");
+            //Generate the columns to prevent 'ERROR: cached plan must not change result type" error'
+            //This happens when the schema changes after the statement is prepared.
+            @SuppressWarnings("OptionalGetWithoutIsPresent")
+            EdgeLabel edgeLabel = this.sqlgGraph.getTopology().getSchema(this.schema).get().getEdgeLabel(this.table).get();
+            StringBuilder sql = new StringBuilder("SELECT\n\t");
+            sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID"));
+            for (PropertyColumn propertyColumn : edgeLabel.properties.values()) {
+                sql.append(", ");
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(propertyColumn.getName()));
+            }
+            for (VertexLabel vertexLabel : edgeLabel.getOutVertexLabels()) {
+                sql.append(", ");
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(vertexLabel.getSchema().getName() + "." + vertexLabel.getName() + SchemaManager.OUT_VERTEX_COLUMN_END));
+            }
+            for (VertexLabel vertexLabel : edgeLabel.getInVertexLabels()) {
+                sql.append(", ");
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(vertexLabel.getSchema().getName() + "." + vertexLabel.getName() + SchemaManager.IN_VERTEX_COLUMN_END));
+            }
+            sql.append("\nFROM\n\t");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.schema));
             sql.append(".");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(SchemaManager.EDGE_PREFIX + this.table));
@@ -230,6 +248,7 @@ public class SqlgEdge extends SqlgElement implements Edge {
                 logger.debug(sql.toString());
             }
             try (PreparedStatement preparedStatement = conn.prepareStatement(sql.toString())) {
+                preparedStatement.setCursorName("");
                 preparedStatement.setLong(1, this.recordId.getId());
                 ResultSet resultSet = preparedStatement.executeQuery();
                 if (resultSet.next()) {
@@ -242,7 +261,7 @@ public class SqlgEdge extends SqlgElement implements Edge {
     }
 
     public void loadInVertex(ResultSet resultSet, String label, int columnIdx) throws SQLException {
-        SchemaTable inVertexColumnName = SchemaTable.from(this.sqlgGraph, label, this.sqlgGraph.getSqlDialect().getPublicSchema());
+        SchemaTable inVertexColumnName = SchemaTable.from(this.sqlgGraph, label);
         Long inId = resultSet.getLong(columnIdx);
         if (!resultSet.wasNull()) {
             this.inVertex = SqlgVertex.of(this.sqlgGraph, inId, inVertexColumnName.getSchema(), SqlgUtil.removeTrailingInId(inVertexColumnName.getTable()));
@@ -250,7 +269,7 @@ public class SqlgEdge extends SqlgElement implements Edge {
     }
 
     public void loadOutVertex(ResultSet resultSet, String label, int columnIdx) throws SQLException {
-        SchemaTable outVertexColumnName = SchemaTable.from(this.sqlgGraph, label, this.sqlgGraph.getSqlDialect().getPublicSchema());
+        SchemaTable outVertexColumnName = SchemaTable.from(this.sqlgGraph, label);
         Long outId = resultSet.getLong(columnIdx);
         if (!resultSet.wasNull()) {
             this.outVertex = SqlgVertex.of(this.sqlgGraph, outId, outVertexColumnName.getSchema(), SqlgUtil.removeTrailingOutId(outVertexColumnName.getTable()));
@@ -273,10 +292,10 @@ public class SqlgEdge extends SqlgElement implements Edge {
                 loadProperty(resultSet, columnName, i);
             }
             if (columnName.endsWith(SchemaManager.IN_VERTEX_COLUMN_END)) {
-                inVertexColumnName = SchemaTable.from(this.sqlgGraph, columnName, this.sqlgGraph.getSqlDialect().getPublicSchema());
+                inVertexColumnName = SchemaTable.from(this.sqlgGraph, columnName);
                 inVertexColumnIndex = i;
             } else if (columnName.endsWith(SchemaManager.OUT_VERTEX_COLUMN_END)) {
-                outVertexColumnName = SchemaTable.from(this.sqlgGraph, columnName, this.sqlgGraph.getSqlDialect().getPublicSchema());
+                outVertexColumnName = SchemaTable.from(this.sqlgGraph, columnName);
                 outVertexColumnIndex = i;
             }
         }

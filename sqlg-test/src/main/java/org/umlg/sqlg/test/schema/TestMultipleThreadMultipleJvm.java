@@ -10,7 +10,10 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.umlg.sqlg.sql.dialect.SqlSchemaChangeDialect;
-import org.umlg.sqlg.structure.*;
+import org.umlg.sqlg.structure.PropertyType;
+import org.umlg.sqlg.structure.Schema;
+import org.umlg.sqlg.structure.SqlgGraph;
+import org.umlg.sqlg.structure.VertexLabel;
 import org.umlg.sqlg.test.BaseTest;
 
 import java.beans.PropertyVetoException;
@@ -282,12 +285,16 @@ public class TestMultipleThreadMultipleJvm extends BaseTest {
             for (Future<SqlgGraph> result : results) {
                 result.get(30, TimeUnit.SECONDS);
             }
+            //Because of the rollBack logic the insert code may also create topology elements, so sleep a bit for notify to do its thing.
+            Thread.sleep(1000);
             logger.info("starting querying data");
             Set<Vertex> vertices = this.sqlgGraph.traversal().V().out().toSet();
             this.sqlgGraph.tx().rollback();
             for (SqlgGraph graph : graphs) {
                 logger.info("assert querying data");
-                assertEquals(vertices, graph.traversal().V().out().toSet());
+                Set<Vertex> actual = graph.traversal().V().out().toSet();
+                logger.info("vertices.size = " + vertices.size() +  " actual.size = " + actual.size());
+                assertEquals(vertices, actual);
                 graph.tx().rollback();
             }
         } finally {

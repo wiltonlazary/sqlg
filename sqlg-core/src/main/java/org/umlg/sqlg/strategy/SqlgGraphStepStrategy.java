@@ -1,15 +1,17 @@
 package org.umlg.sqlg.strategy;
 
 import com.google.common.base.Preconditions;
-
 import org.apache.commons.lang3.Range;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.tinkerpop.gremlin.process.computer.traversal.strategy.optimization.MessagePassingReductionStrategy;
 import org.apache.tinkerpop.gremlin.process.traversal.Step;
 import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
 import org.apache.tinkerpop.gremlin.process.traversal.step.filter.RangeGlobalStep;
 import org.apache.tinkerpop.gremlin.process.traversal.step.map.*;
 import org.apache.tinkerpop.gremlin.process.traversal.step.sideEffect.IdentityStep;
 import org.apache.tinkerpop.gremlin.process.traversal.strategy.optimization.InlineFilterStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.strategy.optimization.PathRetractionStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.strategy.optimization.RepeatUnrollStrategy;
 import org.apache.tinkerpop.gremlin.process.traversal.util.TraversalHelper;
 import org.apache.tinkerpop.gremlin.structure.Graph;
 import org.slf4j.Logger;
@@ -53,9 +55,12 @@ public class SqlgGraphStepStrategy extends BaseSqlgStrategy {
         }
 
         if (originalGraphStep.getIds().length > 0) {
-            Class clazz = originalGraphStep.getIds()[0].getClass();
-            if (!Stream.of(originalGraphStep.getIds()).allMatch(id -> clazz.isAssignableFrom(id.getClass())))
-                throw Graph.Exceptions.idArgsMustBeEitherIdOrElement();
+            Object id = originalGraphStep.getIds()[0];
+            if (id != null) {
+                Class clazz = id.getClass();
+                if (!Stream.of(originalGraphStep.getIds()).allMatch(i -> clazz.isAssignableFrom(i.getClass())))
+                    throw Graph.Exceptions.idArgsMustBeEitherIdOrElement();
+            }
         }
         final List<Step> steps = new ArrayList<>(traversal.asAdmin().getSteps());
         final ListIterator<Step> stepIterator = steps.listIterator();
@@ -63,7 +68,6 @@ public class SqlgGraphStepStrategy extends BaseSqlgStrategy {
             this.logger.debug("gremlin not optimized due to path or tree step. " + traversal.toString() + "\nPath to gremlin:\n" + ExceptionUtils.getStackTrace(new Throwable()));
             return;
         }
-
         combineSteps(traversal, steps, stepIterator);
     }
 
@@ -176,7 +180,7 @@ public class SqlgGraphStepStrategy extends BaseSqlgStrategy {
 
     @Override
     public Set<Class<? extends OptimizationStrategy>> applyPost() {
-        return Stream.of(InlineFilterStrategy.class).collect(Collectors.toSet());
+        return Stream.of(RepeatUnrollStrategy.class, PathRetractionStrategy.class, InlineFilterStrategy.class, MessagePassingReductionStrategy.class).collect(Collectors.toSet());
     }
 }
 

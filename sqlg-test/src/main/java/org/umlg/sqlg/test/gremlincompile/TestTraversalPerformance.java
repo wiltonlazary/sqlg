@@ -3,8 +3,10 @@ package org.umlg.sqlg.test.gremlincompile;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.tinkerpop.gremlin.process.traversal.Path;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.junit.Assert;
 import org.junit.Test;
 import org.umlg.sqlg.structure.PropertyType;
 import org.umlg.sqlg.structure.SqlgVertex;
@@ -25,26 +27,96 @@ import static org.junit.Assert.assertEquals;
  */
 public class TestTraversalPerformance extends BaseTest {
 
+    @Test
+    public void testSpeedWithLargeSchemaFastQuery1() {
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
+        Map<String, PropertyType> columns = new HashMap<>();
+        for (int i = 0; i < 10; i++) {
+            columns.put("property_" + i, PropertyType.STRING);
+        }
+        //Create a large schema, it slows the maps  down
+        for (int i = 0; i < 1_00; i++) {
+            VertexLabel person = this.sqlgGraph.getTopology().ensureVertexLabelExist("Person_" + i, columns);
+            VertexLabel dog = this.sqlgGraph.getTopology().ensureVertexLabelExist("Dog_" + i, columns);
+            person.ensureEdgeLabelExist("pet_" + i, dog, columns);
+        }
+        this.sqlgGraph.tx().commit();
+        stopWatch.stop();
+        System.out.println("done time taken " + stopWatch.toString());
+        stopWatch.reset();
+        stopWatch.start();
+
+        Map<String, Object> columnValues = new HashMap<>();
+        for (int i = 0; i < 10; i++) {
+            columnValues.put("property_" + i, "asdasdasd");
+        }
+        for (int i = 0; i < 1_00; i++) {
+            SqlgVertex person = (SqlgVertex) this.sqlgGraph.addVertex("Person_" + i, columnValues);
+            SqlgVertex dog = (SqlgVertex) this.sqlgGraph.addVertex("Dog_" + i, columnValues);
+            person.addEdgeWithMap("pet_" + i, dog, columnValues);
+        }
+        this.sqlgGraph.tx().commit();
+
+        for (int i = 0; i < 100_000; i++) {
+            Assert.assertEquals(1, this.sqlgGraph.traversal().V().hasLabel("Person_0").out("pet_0").toList().size());
+            stopWatch.stop();
+            System.out.println("query time " + stopWatch.toString());
+            stopWatch.reset();
+            stopWatch.start();
+        }
+        stopWatch.stop();
+        System.out.println("query time " + stopWatch.toString());
+
+    }
+
 //    @Test
-    public void tes() {
-        for (int i = 1; i < 100_001; i++) {
-            Vertex a = this.sqlgGraph.addVertex(T.label, "God", "name", "god" + i);
-            for (int j = 0; j < 2; j++) {
-                Vertex b = this.sqlgGraph.addVertex(T.label, "Hand", "name", "name_" + j);
-                a.addEdge("hand", b);
-                for (int k = 0; k < 5; k++) {
-                    Vertex c = this.sqlgGraph.addVertex(T.label, "Finger", "name", "name_" + k);
-                    b.addEdge("finger", c);
-                }
-            }
-            if (i % 10 == 0) {
+    public void testSpeedWithLargeSchemaFastQuery() {
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start();
+        Map<String, PropertyType> columns = new HashMap<>();
+        for (int i = 0; i < 100; i++) {
+            columns.put("property_" + i, PropertyType.STRING);
+        }
+        //Create a large schema, it slows the maps  down
+        for (int i = 0; i < 1_000; i++) {
+            VertexLabel person = this.sqlgGraph.getTopology().ensureVertexLabelExist("Person_" + i, columns);
+            VertexLabel dog = this.sqlgGraph.getTopology().ensureVertexLabelExist("Dog_" + i, columns);
+            person.ensureEdgeLabelExist("pet_" + i, dog, columns);
+            if (i % 100 == 0) {
                 this.sqlgGraph.tx().commit();
             }
         }
         this.sqlgGraph.tx().commit();
+        stopWatch.stop();
+        System.out.println("done time taken " + stopWatch.toString());
+        stopWatch.reset();
+        stopWatch.start();
+
+        Map<String, Object> columnValues = new HashMap<>();
+        for (int i = 0; i < 100; i++) {
+            columnValues.put("property_" + i, "asdasdasd");
+        }
+        for (int i = 0; i < 1_000; i++) {
+            SqlgVertex person = (SqlgVertex) this.sqlgGraph.addVertex("Person_" + i, columnValues);
+            SqlgVertex dog = (SqlgVertex) this.sqlgGraph.addVertex("Dog_" + i, columnValues);
+            person.addEdgeWithMap("pet_" + i, dog, columnValues);
+        }
+        this.sqlgGraph.tx().commit();
+
+        for (int i = 0; i < 100_000; i++) {
+            Assert.assertEquals(1, this.sqlgGraph.traversal().V().hasLabel("Person_0").out("pet_0").toList().size());
+            stopWatch.stop();
+            System.out.println("query time " + stopWatch.toString());
+            stopWatch.reset();
+            stopWatch.start();
+        }
+        stopWatch.stop();
+        System.out.println("query time " + stopWatch.toString());
 
     }
-    @Test
+
+//    @Test
     public void testSpeed() throws InterruptedException {
         StopWatch stopWatch = new StopWatch();
         stopWatch.start();
@@ -100,7 +172,7 @@ public class TestTraversalPerformance extends BaseTest {
                 a.addEdge("hand", b);
                 for (int k = 0; k < 5; k++) {
                     Vertex c = this.sqlgGraph.addVertex(T.label, "Finger", "name", "name_" + k);
-                    b.addEdge("finger", c);
+                    Edge e = b.addEdge("finger", c);
                 }
             }
 //            if (i % 500_000 == 0) {

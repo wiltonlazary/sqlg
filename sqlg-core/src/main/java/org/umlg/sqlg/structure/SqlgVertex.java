@@ -150,26 +150,11 @@ public class SqlgVertex extends SqlgElement implements Vertex {
         return new SqlgEdge(this.sqlgGraph, complete, this.schema, label, (SqlgVertex) inVertex, this, keyValueMapPair);
     }
 
-    @Override
-    protected <V> Map<String, VertexProperty<V>> internalGetAllProperties(final String... propertyKeys) {
-        this.sqlgGraph.tx().readWrite();
-        Map<String, ? extends Property<V>> metaPropertiesMap = super.<V>internalGetAllProperties(propertyKeys);
-        return (Map<String, VertexProperty<V>>) metaPropertiesMap;
-    }
-
     @SuppressWarnings("unchecked")
     @Override
     protected <V> Map<String, VertexProperty<V>> internalGetProperties(final String... propertyKeys) {
         this.sqlgGraph.tx().readWrite();
         Map<String, ? extends Property<V>> metaPropertiesMap = super.<V>internalGetProperties(propertyKeys);
-        return (Map<String, VertexProperty<V>>) metaPropertiesMap;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    protected <V> Map<String, VertexProperty<V>> internalGetHiddens(final String... propertyKeys) {
-        this.sqlgGraph.tx().readWrite();
-        Map<String, ? extends Property<V>> metaPropertiesMap = super.<V>internalGetHiddens(propertyKeys);
         return (Map<String, VertexProperty<V>>) metaPropertiesMap;
     }
 
@@ -450,11 +435,22 @@ public class SqlgVertex extends SqlgElement implements Vertex {
                 throw new IllegalStateException("streaming is in progress, first flush or commit before querying.");
             }
 
-            StringBuilder sql = new StringBuilder("SELECT * FROM ");
+            //Generate the columns to prevent 'ERROR: cached plan must not change result type" error'
+            //This happens when the schema changes after the statement is prepared.
+            @SuppressWarnings("OptionalGetWithoutIsPresent")
+            VertexLabel vertexLabel = this.sqlgGraph.getTopology().getSchema(this.schema).get().getVertexLabel(this.table).get();
+            StringBuilder sql = new StringBuilder("SELECT\n\t");
+//            StringBuilder sql = new StringBuilder("SELECT * ");
+            sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID"));
+            for (PropertyColumn propertyColumn : vertexLabel.properties.values()) {
+                sql.append(", ");
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(propertyColumn.getName()));
+            }
+            sql.append("\nFROM\n\t");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.schema));
             sql.append(".");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(SchemaManager.VERTEX_PREFIX + this.table));
-            sql.append(WHERE);
+            sql.append("\nWHERE\n\t");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID"));
             sql.append(" = ?");
             if (this.sqlgGraph.getSqlDialect().needsSemicolon()) {
@@ -527,7 +523,7 @@ public class SqlgVertex extends SqlgElement implements Vertex {
     @Override
     public <V> Iterator<VertexProperty<V>> properties(final String... propertyKeys) {
         SqlgVertex.this.sqlgGraph.tx().readWrite();
-        return SqlgVertex.this.<V>internalGetAllProperties(propertyKeys).values().iterator();
+        return SqlgVertex.this.<V>internalGetProperties(propertyKeys).values().iterator();
     }
 
     SchemaTable getSchemaTablePrefixed() {

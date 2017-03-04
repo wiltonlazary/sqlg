@@ -1,14 +1,18 @@
 package org.umlg.sqlg.test.gremlincompile;
 
-import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal;
 import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.Element;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
+import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.test.BaseTest;
 
+import java.beans.PropertyVetoException;
+import java.io.IOException;
 import java.util.*;
 
 /**
@@ -17,24 +21,42 @@ import java.util.*;
  */
 public class TestGremlinCompileWithAs extends BaseTest {
 
+    @BeforeClass
+    public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
+        BaseTest.beforeClass();
+        if (configuration.getString("jdbc.url").contains("postgresql")) {
+            configuration.addProperty("distributed", true);
+        }
+    }
+
     @Test
-    public void testSchemaTableTreeNextSchemaTableTreeIsEdgeVertex() {
+    public void testSchemaTableTreeNextSchemaTableTreeIsEdgeVertex() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "name", "a1");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B", "name", "b1");
         Vertex c1 = this.sqlgGraph.addVertex(T.label, "C", "name", "c1");
         Edge e1 = a1.addEdge("outA", b1);
         Edge e2 = b1.addEdge("outB", c1);
         this.sqlgGraph.tx().commit();
-        GraphTraversal<Vertex, Map<String, Vertex>> gt = this.sqlgGraph.traversal().V(a1).out().as("b").out().as("c").select("b", "c");
-        List<Map<String, Vertex>> list = gt.toList();
-        Assert.assertEquals(1, list.size());
-        Assert.assertEquals(b1, list.get(0).get("b"));
-        Assert.assertEquals(c1, list.get(0).get("c"));
+        testSchemaTableTreeNextSchemaTableTreeIsEdgeVertex_assert(this.sqlgGraph, a1, b1, c1);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testSchemaTableTreeNextSchemaTableTreeIsEdgeVertex_assert(this.sqlgGraph1, a1, b1, c1);
+        }
 
     }
 
+    private void testSchemaTableTreeNextSchemaTableTreeIsEdgeVertex_assert(SqlgGraph sqlgGraph, Vertex a1, Vertex b1, Vertex c1) {
+        DefaultGraphTraversal<Vertex, Map<String, Vertex>> gt = (DefaultGraphTraversal)sqlgGraph.traversal().V(a1).out().as("b").out().as("c").select("b", "c");
+        Assert.assertEquals(4, gt.getSteps().size());
+        List<Map<String, Vertex>> list = gt.toList();
+        Assert.assertEquals(2, gt.getSteps().size());
+        Assert.assertEquals(1, list.size());
+        Assert.assertEquals(b1, list.get(0).get("b"));
+        Assert.assertEquals(c1, list.get(0).get("c"));
+    }
+
     @Test
-    public void testHasLabelOutWithAs() {
+    public void testHasLabelOutWithAs() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "name", "a1");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B", "name", "b1");
         Vertex b2 = this.sqlgGraph.addVertex(T.label, "B", "name", "b2");
@@ -45,14 +67,25 @@ public class TestGremlinCompileWithAs extends BaseTest {
         Edge e3 = a1.addEdge("outB", b3, "edgeName", "edge3");
         Edge e4 = a1.addEdge("outB", b4, "edgeName", "edge4");
         this.sqlgGraph.tx().commit();
-        GraphTraversal<Vertex, Map<String, Element>> traversal = this.sqlgGraph.traversal().V(a1)
+        testHasLabelOutWithAs_assert(this.sqlgGraph, a1, b1, b2, b3, b4, e1, e2, e3, e4);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testHasLabelOutWithAs_assert(this.sqlgGraph1, a1, b1, b2, b3, b4, e1, e2, e3, e4);
+        }
+
+    }
+
+    private void testHasLabelOutWithAs_assert(SqlgGraph sqlgGraph, Vertex a1, Vertex b1, Vertex b2, Vertex b3, Vertex b4, Edge e1, Edge e2, Edge e3, Edge e4) {
+        DefaultGraphTraversal<Vertex, Map<String, Element>> traversal = (DefaultGraphTraversal)sqlgGraph.traversal().V(a1)
                 .outE("outB")
                 .as("e")
                 .inV()
                 .as("B")
                 .select("e", "B");
+        Assert.assertEquals(4, traversal.getSteps().size());
         List<Map<String, Element>> result = traversal.toList();
-        Collections.sort(result, (o1, o2) -> o1.get("e").<String>value("edgeName").compareTo(o2.get("e").<String>value("edgeName")));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        Collections.sort(result, Comparator.comparing(o -> o.get("e").<String>value("edgeName")));
         Assert.assertEquals(4, result.size());
 
         Edge queryE0 = (Edge) result.get(0).get("e");
@@ -85,7 +118,10 @@ public class TestGremlinCompileWithAs extends BaseTest {
         Assert.assertEquals(b4, queryB4);
         Assert.assertEquals("b4", queryB4.value("name"));
 
-        final List<Edge> a1Edges = this.sqlgGraph.traversal().V(a1.id()).bothE().toList();
+        DefaultGraphTraversal<Vertex, Edge> traversal1 = (DefaultGraphTraversal<Vertex, Edge>) sqlgGraph.traversal().V(a1.id()).bothE();
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        final List<Edge> a1Edges = traversal1.toList();
+        Assert.assertEquals(1, traversal1.getSteps().size());
         Assert.assertEquals(4, a1Edges.size());
         List<String> names = new ArrayList<>(Arrays.asList("b1", "b2", "b3", "b4"));
         for (Edge a1Edge : a1Edges) {
@@ -93,11 +129,10 @@ public class TestGremlinCompileWithAs extends BaseTest {
             Assert.assertEquals("a1", a1Edge.outVertex().<String>value("name"));
         }
         Assert.assertTrue(names.isEmpty());
-
     }
 
     @Test
-    public void testHasLabelOutWithAsNotFromStart() {
+    public void testHasLabelOutWithAsNotFromStart() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "name", "a1");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B", "name", "b1");
         Vertex b2 = this.sqlgGraph.addVertex(T.label, "B", "name", "b2");
@@ -113,57 +148,86 @@ public class TestGremlinCompileWithAs extends BaseTest {
         Edge e6 = b2.addEdge("outC", c2, "edgeName", "edge6");
 
         this.sqlgGraph.tx().commit();
-        List<Map<String, Vertex>> restul = this.sqlgGraph.traversal().V(a1).as("a").out().as("b").<Vertex>select("a", "b").toList();
-        GraphTraversal<Vertex, Vertex> traversal = this.sqlgGraph.traversal().V(a1)
+        testHasLabelOutWithAsNotFromStart_assert(this.sqlgGraph, a1, c1, c2);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testHasLabelOutWithAsNotFromStart_assert(this.sqlgGraph1, a1, c1, c2);
+        }
+
+    }
+
+    private void testHasLabelOutWithAsNotFromStart_assert(SqlgGraph sqlgGraph, Vertex a1, Vertex c1, Vertex c2) {
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal) sqlgGraph.traversal().V(a1)
                 .out("outB")
                 .out("outC")
                 .as("x")
                 .select("x");
+        Assert.assertEquals(4, traversal.getSteps().size());
         List<Vertex> result = traversal.toList();
-        Collections.sort(result, (o1, o2) -> o1.<String>value("name").compareTo(o2.<String>value("name")));
+        Assert.assertEquals(2, traversal.getSteps().size());
+        Collections.sort(result, Comparator.comparing(o -> o.<String>value("name")));
         Assert.assertEquals(2, result.size());
 
         Assert.assertEquals(c1, result.get(0));
         Assert.assertEquals(c2, result.get(1));
-
     }
 
     @Test
-    public void testAsWithDuplicatePaths() {
+    public void testAsWithDuplicatePaths() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "Person", "name", "a1");
         Vertex a2 = this.sqlgGraph.addVertex(T.label, "Person", "name", "a2");
         Edge e1 = a1.addEdge("friend", a2, "weight", 5);
         this.sqlgGraph.tx().commit();
 
-        GraphTraversal<Vertex, Map<String, Element>> gt = this.sqlgGraph.traversal()
+        testAsWithDuplicatePaths_assert(this.sqlgGraph, a1, e1);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testAsWithDuplicatePaths_assert(this.sqlgGraph1, a1, e1);
+        }
+    }
+
+    private void testAsWithDuplicatePaths_assert(SqlgGraph sqlgGraph, Vertex a1, Edge e1) {
+        DefaultGraphTraversal<Vertex, Map<String, Element>> gt = (DefaultGraphTraversal) sqlgGraph.traversal()
                 .V(a1)
                 .outE().as("e")
                 .inV()
                 .in().as("v")
                 .select("e", "v");
+        Assert.assertEquals(5, gt.getSteps().size());
 
         List<Map<String, Element>> result = gt.toList();
+        Assert.assertEquals(2, gt.getSteps().size());
         Assert.assertEquals(1, result.size());
         Assert.assertEquals(e1, result.get(0).get("e"));
         Assert.assertEquals(a1, result.get(0).get("v"));
     }
-    
+
     @Test
     public void testChainSelect() throws Exception {
-    	Vertex a1 = this.sqlgGraph.addVertex(T.label, "Person", "name", "a1");
+        Vertex a1 = this.sqlgGraph.addVertex(T.label, "Person", "name", "a1");
         Vertex a2 = this.sqlgGraph.addVertex(T.label, "Person", "name", "a2");
         a1.addEdge("friend", a2, "weight", 5);
         this.sqlgGraph.tx().commit();
 
-        try (GraphTraversal<Vertex, Vertex> gt = this.sqlgGraph.traversal()
-                .V().hasLabel("Person").has("name","a1").as("v1")
+        testChainSelect_assert(this.sqlgGraph, a2);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testChainSelect_assert(this.sqlgGraph1, a2);
+        }
+
+    }
+
+    private void testChainSelect_assert(SqlgGraph sqlgGraph, Vertex a2) throws Exception {
+        try (DefaultGraphTraversal<Vertex, Vertex> gt = (DefaultGraphTraversal<Vertex, Vertex>) sqlgGraph.traversal()
+                .V().hasLabel("Person").has("name", "a1").as("v1")
                 .values("name").as("name1")
                 .select("v1")
-                .out("friend");){
-        	Assert.assertTrue(gt.hasNext());
-        	Assert.assertEquals(a2, gt.next());
-        	Assert.assertFalse(gt.hasNext());
+                .out("friend")) {
+            Assert.assertEquals(5, gt.getSteps().size());
+            Assert.assertTrue(gt.hasNext());
+            Assert.assertEquals(5, gt.getSteps().size());
+            Assert.assertEquals(a2, gt.next());
+            Assert.assertFalse(gt.hasNext());
         }
-        
     }
 }

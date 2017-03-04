@@ -1,16 +1,19 @@
 package org.umlg.sqlg.test.gremlincompile;
 
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal;
 import org.apache.tinkerpop.gremlin.structure.Direction;
 import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
+import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.test.BaseTest;
 
+import java.beans.PropertyVetoException;
+import java.io.IOException;
 import java.util.List;
-
-import static org.junit.Assert.assertEquals;
 
 /**
  * Date: 2015/01/18
@@ -18,39 +21,92 @@ import static org.junit.Assert.assertEquals;
  */
 public class TestGremlinCompileE extends BaseTest {
 
+    @BeforeClass
+    public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
+        BaseTest.beforeClass();
+        if (configuration.getString("jdbc.url").contains("postgresql")) {
+            configuration.addProperty("distributed", true);
+        }
+    }
+
     @Test
-    public void testOutE() {
+    public void testOutE() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B");
         Edge e = a1.addEdge("outB", b1);
         this.sqlgGraph.tx().commit();
-        Assert.assertEquals(1, vertexTraversal(a1).outE().count().next().intValue());
-        Assert.assertEquals(e, vertexTraversal(a1).outE().next());
+        testOutE_assert(this.sqlgGraph, a1, e);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testOutE_assert(this.sqlgGraph, a1, e);
+        }
+    }
+
+    private void testOutE_assert(SqlgGraph sqlgGraph, Vertex a1, Edge e) {
+        DefaultGraphTraversal<Vertex, Long> traversal = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(sqlgGraph, a1).outE().count();
+        Assert.assertEquals(3, traversal.getSteps().size());
+        Assert.assertEquals(1, traversal.next().intValue());
+        Assert.assertEquals(2, traversal.getSteps().size());
+
+        DefaultGraphTraversal<Vertex, Edge> traversal1 = (DefaultGraphTraversal<Vertex, Edge>) vertexTraversal(sqlgGraph, a1).outE();
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        Assert.assertEquals(e, traversal1.next());
+        Assert.assertEquals(1, traversal1.getSteps().size());
     }
 
     @Test
-    public void testInE() {
+    public void testInE() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B");
         Edge e = a1.addEdge("outB", b1);
         this.sqlgGraph.tx().commit();
-        Assert.assertEquals(1, vertexTraversal(b1).inE().count().next().intValue());
-        Assert.assertEquals(e, vertexTraversal(b1).inE().next());
+        testInE_assert(this.sqlgGraph, b1, e);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testInE_assert(this.sqlgGraph1, b1, e);
+        }
+    }
+
+    private void testInE_assert(SqlgGraph sqlgGraph, Vertex b1, Edge e) {
+        DefaultGraphTraversal<Vertex, Long> traversal = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(sqlgGraph, b1).inE().count();
+        Assert.assertEquals(3, traversal.getSteps().size());
+        Assert.assertEquals(1, traversal.next().intValue());
+        Assert.assertEquals(2, traversal.getSteps().size());
+
+        DefaultGraphTraversal<Vertex, Edge> traversal1 = (DefaultGraphTraversal<Vertex, Edge>) vertexTraversal(sqlgGraph, b1).inE();
+        Assert.assertEquals(2, traversal1.getSteps().size());
+        Assert.assertEquals(e, traversal1.next());
+        Assert.assertEquals(1, traversal1.getSteps().size());
     }
 
     @Test
-    public void testEdgeOut() {
+    public void testEdgeOut() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B");
         Edge e = a1.addEdge("outB", b1);
         this.sqlgGraph.tx().commit();
-        Assert.assertEquals(a1, edgeTraversal(e).outV().next());
-        Assert.assertEquals(1, edgeTraversal(e).outV().outE().count().next().intValue());
-        Assert.assertEquals(e, edgeTraversal(e).outV().outE().next());
+        testEdgeOut_assert(this.sqlgGraph, a1, e);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testEdgeOut_assert(this.sqlgGraph1, a1, e);
+        }
+    }
+
+    private void testEdgeOut_assert(SqlgGraph sqlgGraph, Vertex a1, Edge e) {
+        DefaultGraphTraversal<Edge, Vertex> traversal = (DefaultGraphTraversal<Edge, Vertex>) edgeTraversal(sqlgGraph, e).outV();
+        Assert.assertEquals(2, traversal.getSteps().size());
+        Assert.assertEquals(a1, traversal.next());
+        Assert.assertEquals(1, traversal.getSteps().size());
+        Assert.assertEquals(1, edgeTraversal(sqlgGraph, e).outV().outE().count().next().intValue());
+
+        DefaultGraphTraversal<Edge, Edge> traversal1 = (DefaultGraphTraversal<Edge, Edge>) edgeTraversal(sqlgGraph, e).outV().outE();
+        Assert.assertEquals(3, traversal1.getSteps().size());
+        Assert.assertEquals(e, traversal1.next());
+        Assert.assertEquals(1, traversal1.getSteps().size());
     }
 
     @Test
-    public void testOutEOut() {
+    public void testOutEOut() throws InterruptedException {
         Vertex a1 = this.sqlgGraph.addVertex(T.label, "A");
         Vertex b1 = this.sqlgGraph.addVertex(T.label, "B");
         Vertex b2 = this.sqlgGraph.addVertex(T.label, "B");
@@ -70,9 +126,28 @@ public class TestGremlinCompileE extends BaseTest {
         Edge e8 = b1.addEdge("outC", c6);
         this.sqlgGraph.tx().commit();
 
-        Assert.assertEquals(2, vertexTraversal(a1).outE().count().next().intValue());
-        Assert.assertEquals(6, vertexTraversal(a1).out().outE().count().next().intValue());
-        List<Edge> edges = vertexTraversal(a1).out().outE().toList();
+        testOutEOut_assert(this.sqlgGraph, a1, e3, e4, e5, e6, e7, e8);
+        if (this.sqlgGraph1 != null) {
+            Thread.sleep(SLEEP_TIME);
+            testOutEOut_assert(this.sqlgGraph1, a1, e3, e4, e5, e6, e7, e8);
+        }
+    }
+
+    private void testOutEOut_assert(SqlgGraph sqlgGraph, Vertex a1, Edge e3, Edge e4, Edge e5, Edge e6, Edge e7, Edge e8) {
+        DefaultGraphTraversal<Vertex, Long> traversal = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(sqlgGraph, a1).outE().count();
+        Assert.assertEquals(3, traversal.getSteps().size());
+        Assert.assertEquals(2, traversal.next().intValue());
+        Assert.assertEquals(2, traversal.getSteps().size());
+
+        DefaultGraphTraversal<Vertex, Long> traversal1 = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(sqlgGraph, a1).out().outE().count();
+        Assert.assertEquals(4, traversal1.getSteps().size());
+        Assert.assertEquals(6, traversal1.next().intValue());
+        Assert.assertEquals(2, traversal1.getSteps().size());
+
+        DefaultGraphTraversal<Vertex, Edge> traversal2 = (DefaultGraphTraversal<Vertex, Edge>) vertexTraversal(sqlgGraph, a1).out().outE();
+        Assert.assertEquals(3, traversal2.getSteps().size());
+        List<Edge> edges = traversal2.toList();
+        Assert.assertEquals(1, traversal2.getSteps().size());
         Assert.assertTrue(edges.contains(e3));
         Assert.assertTrue(edges.contains(e4));
         Assert.assertTrue(edges.contains(e5));
@@ -90,8 +165,8 @@ public class TestGremlinCompileE extends BaseTest {
         v1.addEdge("walks", v2, "location", "arroyo");
         v2.addEdge("knows", v1, "since", 2010);
         this.sqlgGraph.tx().setLazyQueries(false);
-        assertEquals(4, vertexTraversal(v1).bothE().count().next().intValue());
-        assertEquals(4, vertexTraversal(v2).bothE().count().next().intValue());
+        Assert.assertEquals(4, vertexTraversal(this.sqlgGraph, v1).bothE().count().next().intValue());
+        Assert.assertEquals(4, vertexTraversal(this.sqlgGraph, v2).bothE().count().next().intValue());
         v1.edges(Direction.BOTH).forEachRemaining(edge -> {
             v1.addEdge("livesWith", v2);
             v1.addEdge("walks", v2, "location", "river");
@@ -100,15 +175,26 @@ public class TestGremlinCompileE extends BaseTest {
 
         this.sqlgGraph.tx().commit();
 
-        List<Edge> edgeList = vertexTraversal(v1).outE().toList();
-        for (Edge edge : edgeList) {
-            System.out.println(edge);
-        }
+        DefaultGraphTraversal<Vertex, Long> traversal = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(this.sqlgGraph, v1).outE().count();
+        Assert.assertEquals(3, traversal.getSteps().size());
+        Assert.assertEquals(8, traversal.next().intValue());
+        Assert.assertEquals(2, traversal.getSteps().size());
 
-        assertEquals(8, vertexTraversal(v1).outE().count().next().intValue());
-        assertEquals(0, vertexTraversal(v2).outE().count().next().intValue());
+        DefaultGraphTraversal<Vertex, Long> traversal1 = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(this.sqlgGraph, v2).outE().count();
+        Assert.assertEquals(3, traversal1.getSteps().size());
+        Assert.assertEquals(0, traversal1.next().intValue());
+        Assert.assertEquals(2, traversal1.getSteps().size());
+
         v1.edges(Direction.BOTH).forEachRemaining(Edge::remove);
-        assertEquals(0, vertexTraversal(v1).bothE().count().next().intValue());
-        assertEquals(0, vertexTraversal(v2).bothE().count().next().intValue());
+
+        DefaultGraphTraversal<Vertex, Long> traversal2 = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(this.sqlgGraph, v1).bothE().count();
+        Assert.assertEquals(3, traversal2.getSteps().size());
+        Assert.assertEquals(0, traversal2.next().intValue());
+        Assert.assertEquals(2, traversal2.getSteps().size());
+
+        DefaultGraphTraversal<Vertex, Long> traversal3 = (DefaultGraphTraversal<Vertex, Long>) vertexTraversal(this.sqlgGraph, v2).bothE().count();
+        Assert.assertEquals(3, traversal3.getSteps().size());
+        Assert.assertEquals(0, traversal3.next().intValue());
+        Assert.assertEquals(2, traversal3.getSteps().size());
     }
 }

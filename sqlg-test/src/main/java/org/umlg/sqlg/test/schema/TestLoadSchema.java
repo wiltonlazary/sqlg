@@ -5,21 +5,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
-import org.umlg.sqlg.structure.PropertyType;
-import org.umlg.sqlg.structure.SchemaTable;
-import org.umlg.sqlg.structure.SqlgGraph;
+import org.umlg.sqlg.structure.*;
 import org.umlg.sqlg.test.BaseTest;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * Date: 2014/07/22
@@ -44,10 +41,10 @@ public class TestLoadSchema extends BaseTest {
         //noinspection Duplicates
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Vertex vv = sqlgGraph1.traversal().V(v.id()).next();
-            assertTrue(vv.property("createOn").isPresent());
+            Assert.assertTrue(vv.property("createOn").isPresent());
             Map<String, PropertyType> propertyTypeMap = sqlgGraph1.getTopology().getAllTables().get(SchemaTable.of(
                     sqlgGraph1.getSqlDialect().getPublicSchema(), "V_Person").toString());
-            assertTrue(propertyTypeMap.containsKey("createOn"));
+            Assert.assertTrue(propertyTypeMap.containsKey("createOn"));
             sqlgGraph1.tx().rollback();
         }
     }
@@ -60,10 +57,10 @@ public class TestLoadSchema extends BaseTest {
         //noinspection Duplicates
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Vertex vv = sqlgGraph1.traversal().V(v.id()).next();
-            assertTrue(vv.property("createOn").isPresent());
+            Assert.assertTrue(vv.property("createOn").isPresent());
             Map<String, PropertyType> propertyTypeMap = sqlgGraph1.getTopology().getAllTables().get(SchemaTable.of(
                     sqlgGraph1.getSqlDialect().getPublicSchema(), "V_Person").toString());
-            assertTrue(propertyTypeMap.containsKey("createOn"));
+            Assert.assertTrue(propertyTypeMap.containsKey("createOn"));
             sqlgGraph1.tx().rollback();
         }
     }
@@ -76,10 +73,10 @@ public class TestLoadSchema extends BaseTest {
         //noinspection Duplicates
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Vertex vv = sqlgGraph1.traversal().V(v.id()).next();
-            assertTrue(vv.property("createOn").isPresent());
+            Assert.assertTrue(vv.property("createOn").isPresent());
             Map<String, PropertyType> propertyTypeMap = sqlgGraph1.getTopology().getAllTables().get(SchemaTable.of(
                     sqlgGraph1.getSqlDialect().getPublicSchema(), "V_Person").toString());
-            assertTrue(propertyTypeMap.containsKey("createOn"));
+            Assert.assertTrue(propertyTypeMap.containsKey("createOn"));
             sqlgGraph1.tx().rollback();
         }
     }
@@ -95,10 +92,10 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Vertex vv = sqlgGraph1.traversal().V(v1.id()).next();
-            assertTrue(vv.property("doc").isPresent());
+            Assert.assertTrue(vv.property("doc").isPresent());
             Map<String, PropertyType> propertyTypeMap = sqlgGraph1.getTopology().getAllTables().get(SchemaTable.of(
                     sqlgGraph1.getSqlDialect().getPublicSchema(), "V_Person").toString());
-            assertTrue(propertyTypeMap.containsKey("doc"));
+            Assert.assertTrue(propertyTypeMap.containsKey("doc"));
             sqlgGraph1.tx().rollback();
         }
     }
@@ -110,10 +107,10 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Vertex vv = sqlgGraph1.traversal().V(v.id()).next();
-            assertFalse(vv.property("ID").isPresent());
+            Assert.assertFalse(vv.property("ID").isPresent());
             Map<String, PropertyType> propertyTypeMap = sqlgGraph1.getTopology().getAllTables().get(SchemaTable.of(
                     sqlgGraph1.getSqlDialect().getPublicSchema(), "V_Person").toString());
-            assertFalse(propertyTypeMap.containsKey("ID"));
+            Assert.assertFalse(propertyTypeMap.containsKey("ID"));
             sqlgGraph1.tx().rollback();
         }
     }
@@ -140,9 +137,9 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Iterator<Vertex> iter = sqlgGraph1.traversal().V().has(T.label, "Person");
-            assertTrue(iter.hasNext());
+            Assert.assertTrue(iter.hasNext());
             Vertex v = iter.next();
-            assertArrayEquals(new byte[]{1,2,3,4}, v.<byte[]>property("byteArray").value());
+            Assert.assertArrayEquals(new byte[]{1,2,3,4}, v.<byte[]>property("byteArray").value());
         }
     }
 
@@ -154,7 +151,7 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph1 = SqlgGraph.open(configuration)) {
             Iterator<Vertex> iter = sqlgGraph1.traversal().V().has(T.label, "Person");
-            assertTrue(iter.hasNext());
+            Assert.assertTrue(iter.hasNext());
             Vertex v = iter.next();
             assertEquals(true, v.property("aBoolean").value());
             assertEquals((short) 1, v.property("aShort").value());
@@ -197,7 +194,7 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph = SqlgGraph.open(configuration)) {
             v1 = sqlgGraph.traversal().V(v1.id()).next();
-            assertNotNull(v1);
+            Assert.assertNotNull(v1);
             assertEquals(true, v1.property("aBoolean").value());
             assertEquals((short) 1, v1.property("aShort").value());
             assertEquals(1, v1.property("aInteger").value());
@@ -213,8 +210,8 @@ public class TestLoadSchema extends BaseTest {
             assertEquals(2D, v2.property("bDouble").value());
             assertEquals("bbbbbbbbbbbbb", v2.property("bString").value());
 
-            Iterator<Edge> edgeIter = vertexTraversal(v1).outE("edgeTest");
-            assertTrue(edgeIter.hasNext());
+            Iterator<Edge> edgeIter = vertexTraversal(sqlgGraph, v1).outE("edgeTest");
+            Assert.assertTrue(edgeIter.hasNext());
             Edge e = edgeIter.next();
             assertEquals(true, e.property("cBoolean").value());
             assertEquals((short) 3, e.property("cShort").value());
@@ -273,9 +270,9 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.tx().commit();
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph = SqlgGraph.open(configuration)) {
-            assertEquals(2, vertexTraversal(sqlgGraph.traversal().V(realBsc.id()).next()).out("workspaceElement").count().next().intValue());
-            assertEquals(1, vertexTraversal(sqlgGraph.traversal().V(realBscWE.id()).next()).in("workspaceElement").count().next().intValue());
-            assertEquals(1, vertexTraversal(sqlgGraph.traversal().V(planBsc.id()).next()).in("workspaceElement").count().next().intValue());
+            assertEquals(2, vertexTraversal(sqlgGraph,  sqlgGraph.traversal().V(realBsc.id()).next()).out("workspaceElement").count().next().intValue());
+            assertEquals(1, vertexTraversal(sqlgGraph, sqlgGraph.traversal().V(realBscWE.id()).next()).in("workspaceElement").count().next().intValue());
+            assertEquals(1, vertexTraversal(sqlgGraph, sqlgGraph.traversal().V(planBsc.id()).next()).in("workspaceElement").count().next().intValue());
         }
     }
 
@@ -291,8 +288,8 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.tx().commit();
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph = SqlgGraph.open(configuration)) {
-            assertEquals(1, vertexTraversal(sqlgGraph.traversal().V(realBscWE.id()).next()).out("workspaceElement").count().next().intValue());
-            assertEquals(1, vertexTraversal(sqlgGraph.traversal().V(planBscWE.id()).next()).out("workspaceElement").count().next().intValue());
+            assertEquals(1, vertexTraversal(sqlgGraph, sqlgGraph.traversal().V(realBscWE.id()).next()).out("workspaceElement").count().next().intValue());
+            assertEquals(1, vertexTraversal(sqlgGraph, sqlgGraph.traversal().V(planBscWE.id()).next()).out("workspaceElement").count().next().intValue());
         }
     }
 
@@ -337,7 +334,7 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.tx().commit();
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph = SqlgGraph.open(configuration)) {
-            assertTrue(sqlgGraph.traversal().V().hasLabel("Report").hasNext());
+            Assert.assertTrue(sqlgGraph.traversal().V().hasLabel("Report").hasNext());
             report1 = sqlgGraph.traversal().V().hasLabel("Report").next();
             assertEquals(2, sqlgGraph.traversal().V(report1).out("label").count().next(), 0);
         }
@@ -353,7 +350,7 @@ public class TestLoadSchema extends BaseTest {
         this.sqlgGraph.tx().commit();
         this.sqlgGraph.close();
         try (SqlgGraph sqlgGraph = SqlgGraph.open(configuration)) {
-            assertTrue(sqlgGraph.traversal().V().hasLabel("Report").hasNext());
+            Assert.assertTrue(sqlgGraph.traversal().V().hasLabel("Report").hasNext());
             report1 = sqlgGraph.traversal().V().hasLabel("Report").next();
             assertEquals(2, sqlgGraph.traversal().V(report1).in("label").count().next(), 0);
         }
@@ -370,6 +367,40 @@ public class TestLoadSchema extends BaseTest {
         a1.addEdge("hi", d1);
         this.sqlgGraph.tx().commit();
         assertEquals(3, this.sqlgGraph.traversal().V(a1).out().count().next(), 0);
+    }
+
+    @Test
+    public void testLoadGlobalUniqueIndexes() throws Exception {
+        Map<String, PropertyType> properties = new HashMap<>();
+        properties.put("name1", PropertyType.STRING);
+        properties.put("name2", PropertyType.STRING);
+        VertexLabel aVertexLabel = this.sqlgGraph.getTopology().getPublicSchema().ensureVertexLabelExist("A", properties);
+        Assert.assertTrue(aVertexLabel.isUncommitted());
+        properties.clear();
+        properties.put("name3", PropertyType.STRING);
+        properties.put("name4", PropertyType.STRING);
+        VertexLabel bVertexLabel = this.sqlgGraph.getTopology().getPublicSchema().ensureVertexLabelExist("B", properties);
+        Assert.assertTrue(bVertexLabel.isUncommitted());
+        properties.clear();
+        properties.put("name5", PropertyType.STRING);
+        properties.put("name6", PropertyType.STRING);
+        EdgeLabel edgeLabel = aVertexLabel.ensureEdgeLabelExist("ab", bVertexLabel, properties);
+        Assert.assertTrue(edgeLabel.isUncommitted());
+        Set<PropertyColumn> globalUniqueIndexPropertyColumns = new HashSet<>();
+        globalUniqueIndexPropertyColumns.addAll(new HashSet<>(aVertexLabel.getProperties().values()));
+        globalUniqueIndexPropertyColumns.addAll(new HashSet<>(bVertexLabel.getProperties().values()));
+        globalUniqueIndexPropertyColumns.addAll(new HashSet<>(edgeLabel.getProperties().values()));
+        this.sqlgGraph.getTopology().ensureGlobalUniqueIndexExist(globalUniqueIndexPropertyColumns);
+        this.sqlgGraph.tx().commit();
+        this.sqlgGraph.close();
+        try (SqlgGraph sqlgGraph = SqlgGraph.open(configuration)) {
+            assertEquals(1, sqlgGraph.getTopology().getGlobalUniqueIndexes().size());
+            GlobalUniqueIndex globalUniqueIndex = sqlgGraph.getTopology().getGlobalUniqueIndexes().iterator().next();
+            Assert.assertTrue(globalUniqueIndex.getProperties().containsAll(globalUniqueIndexPropertyColumns));
+            for (PropertyColumn globalUniqueIndexPropertyColumn : globalUniqueIndexPropertyColumns) {
+                assertEquals(1, globalUniqueIndexPropertyColumn.getGlobalUniqueIndices().size());
+            }
+        }
     }
 
 }
