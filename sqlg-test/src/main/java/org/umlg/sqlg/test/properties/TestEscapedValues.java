@@ -1,15 +1,14 @@
 package org.umlg.sqlg.test.properties;
 
-import static org.junit.Assert.assertEquals;
-
 import org.apache.tinkerpop.gremlin.process.traversal.P;
 import org.junit.Assume;
 import org.junit.Test;
-import org.umlg.sqlg.structure.BatchManager.BatchModeType;
 import org.umlg.sqlg.test.BaseTest;
 
+import static org.junit.Assert.assertEquals;
+
 /**
- * Test values that are escaped by backslashes
+ * Test values that are escaped by backslashes and that may impact SQL
  * @author jpmoresmau
  *
  */
@@ -17,9 +16,9 @@ public class TestEscapedValues extends BaseTest {
 
 	@Test
 	public void testEscapedValuesSingleQuery(){
-		String[] vals = new String[] { "x-y", "x\ny", "x\"y", "x\\y", "x\\ny", "x\\\"y" };
+		String[] vals = new String[] { "x-y", "x\ny", "x\"y", "x\\y", "x\\ny", "x\\\"y", "'x'y'" };
 		for (String s : vals) {
-			this.sqlgGraph.addVertex("Escaped").property("name", s); 
+			this.sqlgGraph.addVertex("Escaped").property("name", s);
 		}
 		this.sqlgGraph.tx().commit();
 		for (String s : vals){
@@ -30,7 +29,7 @@ public class TestEscapedValues extends BaseTest {
 	
 	@Test
 	public void testEscapedValuesWithinQuery(){
-		String[] vals = new String[] { "x-y", "x\ny", "x\"y", "x\\y", "x\\ny", "x\\\"y" };
+		String[] vals = new String[] { "x-y", "x\ny", "x\"y", "x\\y", "x\\ny", "x\\\"y", "'x'y'"  };
 		for (String s : vals) {
 			this.sqlgGraph.addVertex("Escaped").property("name", s); 
 		}
@@ -43,10 +42,10 @@ public class TestEscapedValues extends BaseTest {
 	@Test
 	public void testEscapedValuesSingleQueryBatch(){
 		Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsBatchMode());
-		this.sqlgGraph.tx().batchMode(BatchModeType.NORMAL);
-		String[] vals = new String[] { "x-y", "x\ny", "x\"y", "x\\y", "x\\ny", "x\\\"y" };
+		this.sqlgGraph.tx().normalBatchModeOn();
+		String[] vals = new String[] { "x-y", "x\ny", "x\"y", "x\\y", "x\\ny", "x\\\"y", "'x'y'" };
 		for (String s : vals) {
-			this.sqlgGraph.addVertex("Escaped").property("name", s); 
+			this.sqlgGraph.addVertex("Escaped").property("name", s);
 		}
 		this.sqlgGraph.tx().commit();
 		for (String s : vals){

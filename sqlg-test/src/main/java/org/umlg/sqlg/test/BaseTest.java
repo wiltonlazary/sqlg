@@ -5,13 +5,16 @@ import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.commons.lang3.time.StopWatch;
 import org.apache.tinkerpop.gremlin.AbstractGremlinTest;
+import org.apache.tinkerpop.gremlin.process.traversal.Step;
 import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.MapHelper;
 import org.apache.tinkerpop.gremlin.structure.*;
 import org.apache.tinkerpop.gremlin.structure.io.GraphReader;
-import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoReader;
+import org.apache.tinkerpop.gremlin.structure.io.Io;
+import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONIo;
+import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONVersion;
 import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
 import org.hamcrest.CoreMatchers;
 import org.junit.*;
@@ -20,6 +23,10 @@ import org.junit.rules.TestWatcher;
 import org.junit.runner.Description;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.umlg.sqlg.sql.parse.ReplacedStep;
+import org.umlg.sqlg.step.SqlgGraphStep;
+import org.umlg.sqlg.step.SqlgStep;
+import org.umlg.sqlg.step.SqlgVertexStep;
 import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.util.SqlgUtil;
 
@@ -31,14 +38,12 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 
 /**
@@ -95,9 +100,13 @@ public abstract class BaseTest {
         this.sqlgGraph.tx().commit();
         this.sqlgGraph.close();
         this.sqlgGraph = SqlgGraph.open(configuration);
+        assertNotNull(this.sqlgGraph);
+        assertNotNull(this.sqlgGraph.getBuildVersion());
         this.gt = this.sqlgGraph.traversal();
         if (configuration.getBoolean("distributed", false)) {
             this.sqlgGraph1 = SqlgGraph.open(configuration);
+            assertNotNull(this.sqlgGraph1);
+            assertEquals(this.sqlgGraph.getBuildVersion(),this.sqlgGraph1.getBuildVersion());
         }
         stopWatch.stop();
         logger.info("Startup time for test = " + stopWatch.toString());
@@ -108,7 +117,7 @@ public abstract class BaseTest {
         try {
             this.sqlgGraph.tx().onClose(Transaction.CLOSE_BEHAVIOR.ROLLBACK);
             this.sqlgGraph.close();
-        } catch (Exception e){
+        } catch (Exception e) {
             logger.error(e.getMessage(), e);
         }
         try {
@@ -116,9 +125,13 @@ public abstract class BaseTest {
                 this.sqlgGraph1.tx().onClose(Transaction.CLOSE_BEHAVIOR.ROLLBACK);
                 this.sqlgGraph1.close();
             }
-        } catch (Exception e){
+        } catch (Exception e) {
             logger.error(e.getMessage(), e);
         }
+    }
+
+    public static boolean isPostgres() {
+        return configuration.getString("jdbc.url").contains("postgresql");
     }
 
     /**
@@ -134,6 +147,40 @@ public abstract class BaseTest {
             conf.setProperty(s, configuration.getProperty(s));
         }
         return conf;
+    }
+
+    public void dropSqlgSchema(SqlgGraph sqlgGraph) {
+        List<String> result = new ArrayList<>();
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_schema_vertex") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_in_edges") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_out_edges") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_vertex_property") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_edge_property") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_vertex_index") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_edge_index") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_index_property") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_globalUniqueIndex_property") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_graph") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_log") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_schema") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_vertex") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_edge") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_property") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_index") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+        result.add("DROP TABLE " + sqlgGraph.getSqlDialect().maybeWrapInQoutes("sqlg_schema") + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_globalUniqueIndex") + (sqlgGraph.getSqlDialect().needsSemicolon() ? ";" : ""));
+
+        result.add(sqlgGraph.getSqlDialect().dropSchemaStatement("sqlg_schema"));
+
+        Connection connection = sqlgGraph.tx().getConnection();
+        try (Statement statement = connection.createStatement()) {
+            for (String s : result) {
+                statement.execute(s);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
     }
 
     protected GraphTraversal<Vertex, Vertex> vertexTraversal(SqlgGraph sqlgGraph, Vertex v) {
@@ -197,9 +244,10 @@ public abstract class BaseTest {
     }
 
     protected void loadModern(SqlgGraph sqlgGraph) {
-        final GraphReader gryoReader = GryoReader.build().create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/org/apache/tinkerpop/gremlin/structure/io/gryo/tinkerpop-modern.kryo")) {
-            gryoReader.readGraph(stream, sqlgGraph);
+        Io.Builder<GraphSONIo> builder = GraphSONIo.build(GraphSONVersion.V3_0);
+        final GraphReader reader = sqlgGraph.io(builder).reader().create();
+        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/tinkerpop-modern-v3d0.json")) {
+            reader.readGraph(stream, sqlgGraph);
         } catch (IOException e) {
             Assert.fail(e.getMessage());
         }
@@ -210,9 +258,10 @@ public abstract class BaseTest {
     }
 
     protected void loadGratefulDead(SqlgGraph sqlgGraph) {
-        final GraphReader gryoReader = GryoReader.build().create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/org/apache/tinkerpop/gremlin/structure/io/gryo/grateful-dead.kryo")) {
-            gryoReader.readGraph(stream, sqlgGraph);
+        Io.Builder<GraphSONIo> builder = GraphSONIo.build(GraphSONVersion.V3_0);
+        final GraphReader reader = sqlgGraph.io(builder).reader().create();
+        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/grateful-dead-v3d0.json")) {
+            reader.readGraph(stream, sqlgGraph);
         } catch (IOException e) {
             Assert.fail(e.getMessage());
         }
@@ -493,5 +542,61 @@ public abstract class BaseTest {
             }
         }
         return true;
+    }
+
+    protected void assertStep(Step<?, ?> step, boolean isGraph, boolean isEagerLoad, boolean isForMultipleQueries, boolean comparatorsNotOnDb, boolean rangeOnDb) {
+        if (isGraph) {
+            Assert.assertTrue("Expected SqlgGraphStep, found " + step.getClass().getName(), step instanceof SqlgGraphStep);
+        } else {
+            Assert.assertTrue("Expected SqlgVertexStep, found " + step.getClass().getName(), step instanceof SqlgVertexStep);
+        }
+        SqlgStep sqlgStep = (SqlgStep) step;
+        Assert.assertEquals("isEagerLoad should be " + isEagerLoad, isEagerLoad, sqlgStep.isEargerLoad());
+        Assert.assertEquals("isForMultipleQueries should be " + isForMultipleQueries, isForMultipleQueries, sqlgStep.isForMultipleQueries());
+        Assert.assertEquals("comparatorsNotOnDb should be " + comparatorsNotOnDb, comparatorsNotOnDb, sqlgStep.getReplacedSteps().stream().allMatch(r -> r.getDbComparators().isEmpty()));
+        if (!rangeOnDb) {
+            Assert.assertEquals("rangeOnDb should be " + rangeOnDb, rangeOnDb, sqlgStep.getReplacedSteps().get(sqlgStep.getReplacedSteps().size() - 1).getSqlgRangeHolder().isApplyOnDb());
+        } else {
+            //rangeOnDb is true even if there is no range
+            ReplacedStep<?, ?> replacedStep = sqlgStep.getReplacedSteps().get(sqlgStep.getReplacedSteps().size() - 1);
+            if (replacedStep.getSqlgRangeHolder() != null) {
+                Assert.assertEquals("rangeOnDb should be " + rangeOnDb, rangeOnDb, replacedStep.getSqlgRangeHolder().isApplyOnDb());
+            }
+        }
+    }
+
+    protected void assertStep(Step<?, ?> step, boolean isGraph, boolean isEagerLoad, boolean isForMultipleQueries, boolean comparatorsNotOnDb) {
+        if (isGraph) {
+            Assert.assertTrue("Expected SqlgGraphStep, found " + step.getClass().getName(), step instanceof SqlgGraphStep);
+        } else {
+            Assert.assertTrue("Expected SqlgVertexStep, found " + step.getClass().getName(), step instanceof SqlgVertexStep);
+        }
+        SqlgStep sqlgStep = (SqlgStep) step;
+        Assert.assertEquals("isEagerLoad should be " + isEagerLoad, isEagerLoad, sqlgStep.isEargerLoad());
+        Assert.assertEquals("isForMultipleQueries should be " + isForMultipleQueries, isForMultipleQueries, sqlgStep.isForMultipleQueries());
+        Assert.assertEquals("comparatorsNotOnDb should be " + comparatorsNotOnDb, comparatorsNotOnDb, sqlgStep.getReplacedSteps().stream().allMatch(r -> r.getDbComparators().isEmpty()));
+    }
+
+    protected void assertStep(Step<?, ?> step, boolean isGraph, boolean isEagerLoad, boolean comparatorsNotOnDb) {
+        if (isGraph) {
+            Assert.assertTrue("Expected SqlgGraphStep, found " + step.getClass().getName(), step instanceof SqlgGraphStep);
+        } else {
+            Assert.assertTrue("Expected SqlgVertexStep, found " + step.getClass().getName(), step instanceof SqlgVertexStep);
+        }
+        SqlgStep sqlgStep = (SqlgStep) step;
+        Assert.assertEquals("isEagerLoad should be " + isEagerLoad, isEagerLoad, sqlgStep.isEargerLoad());
+        Assert.assertEquals("comparatorsNotOnDb should be " + comparatorsNotOnDb, comparatorsNotOnDb, sqlgStep.getReplacedSteps().stream().allMatch(r -> r.getDbComparators().isEmpty()));
+    }
+
+    public <A, B> List<Map<A, B>> makeMapList(final int size, final Object... keyValues) {
+        final List<Map<A, B>> mapList = new ArrayList<>();
+        for (int i = 0; i < keyValues.length; i = i + (2 * size)) {
+            final Map<A, B> map = new HashMap<>();
+            for (int j = 0; j < (2 * size); j = j + 2) {
+                map.put((A) keyValues[i + j], (B) keyValues[i + j + 1]);
+            }
+            mapList.add(map);
+        }
+        return mapList;
     }
 }

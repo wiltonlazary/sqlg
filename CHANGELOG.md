@@ -1,11 +1,62 @@
+##1.5.2
+* Upgrade to TinkerPop 3.3.3
+* Add docker image for Postgresql
+* Support additional properties on BulkAddEdge [#300](https://github.com/pietermartin/sqlg/issues/300)
+* Fix concurrency bug on MsSqlServer batch mode. Take table lock on BulkCopy.
+* Fix concurrency bug on Postgresql batch mode. The id sequence is incremented before the copy insert happens.
+* Added MySql support. Uses MariaDb dialect but the MySql driver.
+* Improve memory consumption by removing closed prepared statements from the cache.
+
+##1.5.1
+* Add the ability to set the `fetchSize` on the jdbc `java.sql.Statement`.
+* Fix bug [#272](https://github.com/pietermartin/sqlg/issues/272)
+* Make gremlin console work. Tinkerpop made some minor changes to the console that made it stop working.
+
+##1.5.0
+
+* Optimize `DropStep` i.e. `drop()`.
+`TRUNCATE` is used for the most simplest cases. Else `DELETE` statements are generated.
+If the `traversal` itself can not be optimized then barrier strategy is used to cache the starts before deleted them all in one statement.
+* Upgrade dependencies to latest in sonatype. [#247](https://github.com/pietermartin/sqlg/issues/247)
+* Fix bug [#246](https://github.com/pietermartin/sqlg/issues/246)
+* Optimize `OrStep` and `AndStep` to push the predicates down to the db if they are trivial.
+* Optimize `NotStep` to barrier the starts.
+* Optimize `AndStep` to barrier the starts.
+* Optimize `OrStep` to barrier the starts.
+* Optimize `WhereTraversalStep` to barrier the starts.
+* Optimize `RepeatStep`s until traversal to barrier the starts.
+* Replace `TraversetSet` in `ExpandableStep` with an `ArrayList` in `SqlgExpandableStep`. `TravererSet` has a backing `Map`
+of `Traverser` which for Sqlg is always a `SqlgTraverser`. As `SqlgTraverser` always holds the full `Path` adding the barriered (cached)
+starts to the map is to heavy. Seeing as Sqlg does not use bulking the `TraverserSet`s logic is not needed.
+* Optimize the `TraversalFilterStep` to barrier the starts.
+* Upgrade to Tinkerpop 3.3.0
+
+##1.4.1
+
+* Added new predicate to compare 2 properties on the same label.
+* Added support for `has("property")` and `hasNot("property")`
+
+##1.4.0
+
+* Added support for MariaDb
+* Added support for MSSqlServer
+* Added barrier optimization for unoptimized steps. This optimization barriers (cache) the incoming traversers and 
+performs the next step for all the traversers at once. It uses the sql `VALUES` expression for this.
+
+Currently the `optional`, `choose`, `repeat` and `local` steps have this optimization.
+* Added batch mode support for all dialects.
+
 ##1.3.3
 
-. codeship test 2
-
+* `TopologyInf` support for `remove(boolean preserveData)` added.
+        Thanks to [JPMoresmau](https://github.com/JPMoresmau)
 * Replace `ResultSet.getObject(index)` with `ResultSet.getString/Int...` as its faster.
+* Removed Hazelcast. The topology is now distributed using Postgresql's `lock` to hold a global lock across multiple Graphs and JVMs
+and a `V_log` table which hold the changes made. The changes are in turn sent to other Graphs and JVMs using Postgresql's `notify` mechanism.
+* Added `TopologyListener` as a mechanism to observe changes to the topology.
 * Added support for global  unique indexes. This means that a unique index can be placed on multiple properties from any Vertex or Edge.
 * Rewrite of the topology/schema management. `SchemaManager` is replaced with `Topology`.
-There are now object representing the topology. `Topology`, `Schema`, `VertexLabel`, `EdgeLabel`, `PropertyColumn` and `Index`
+There are now classes representing the topology. `Topology`, `Schema`, `VertexLabel`, `EdgeLabel`, `PropertyColumn`, `Index` and `GlobalUniqueIndex`
 * Strengthened the reloading of the topology from the information_schema tables.
 This highlighted some limitations. It is not possible to tell a primitive array from a object array. 
 As such all arrays are  loaded as object arrays. i.e. `int[]{1,2,3}` will become `Integer[]{1,2,3}`
@@ -18,14 +69,13 @@ As such all arrays are  loaded as object arrays. i.e. `int[]{1,2,3}` will become
 
     If a `RepeapStep` could not be optimized then the incoming emit `Element` did not get a label so it was not being returned from the sql.
 
-
 ##1.3.2
 
 * Ensure SqlgGraphStepStrategy and SqlgVertexStepStrategy fires before InlineFilterStrategy.
 * Fix a bug where hasId uses the P.neq predicate.
 * Use BIGSERIAL for auto increment columns in Postgresql [#91](https://github.com/pietermartin/sqlg/issues/91)
 * Fix bug [#92](https://github.com/pietermartin/sqlg/issues/92)
-* Broaded SqlgGraph.bulkAddEdges to take a Collection of ids as opposed to a List.
+* SqlgGraph.bulkAddEdges to take a Collection of ids as opposed to a List.
     Fix bug [#102](https://github.com/pietermartin/sqlg/issues/102)
 * Fix bug [#73](https://github.com/pietermartin/sqlg/issues/73)
         Thanks to [JPMoresmau](https://github.com/JPMoresmau)

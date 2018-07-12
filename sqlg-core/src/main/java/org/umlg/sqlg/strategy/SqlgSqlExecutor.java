@@ -1,16 +1,22 @@
 package org.umlg.sqlg.strategy;
 
+import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.event.Event;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.event.EventCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.umlg.sqlg.sql.parse.SchemaTableTree;
-import org.umlg.sqlg.structure.RecordId;
+import org.umlg.sqlg.structure.SchemaTable;
+import org.umlg.sqlg.structure.SqlgEdge;
 import org.umlg.sqlg.structure.SqlgGraph;
+import org.umlg.sqlg.structure.topology.EdgeLabel;
 import org.umlg.sqlg.util.SqlgUtil;
 
 import java.sql.*;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -19,40 +25,136 @@ import java.util.Set;
  */
 public class SqlgSqlExecutor {
 
-    private static Logger logger = LoggerFactory.getLogger(SqlgSqlExecutor.class.getName());
+    private static Logger logger = LoggerFactory.getLogger(SqlgSqlExecutor.class);
 
     private SqlgSqlExecutor() {
+    }
+
+    public enum DROP_QUERY {
+        ALTER,
+        EDGE,
+        NORMAL,
+        TRUNCATE
+    }
+
+    public static void executeDropQuery(
+            SqlgGraph sqlgGraph,
+            SchemaTableTree rootSchemaTableTree,
+            LinkedList<SchemaTableTree> distinctQueryStack) {
+
+        List<Triple<DROP_QUERY, String, SchemaTable>> sqls = rootSchemaTableTree.constructDropSql(distinctQueryStack);
+        for (Triple<DROP_QUERY, String, SchemaTable> sqlPair : sqls) {
+            DROP_QUERY dropQuery = sqlPair.getLeft();
+            String sql = sqlPair.getMiddle();
+            SchemaTable deletedSchemaTable = sqlPair.getRight();
+            switch (dropQuery) {
+                case ALTER:
+                    executeDropQuery(sqlgGraph, sql, new LinkedList<>(), deletedSchemaTable);
+                    break;
+                case EDGE:
+                    LinkedList<SchemaTableTree> tmp = new LinkedList<>(distinctQueryStack);
+                    tmp.removeLast();
+                    executeDropQuery(sqlgGraph, sql, tmp, deletedSchemaTable);
+                    break;
+                case NORMAL:
+                    executeDropQuery(sqlgGraph, sql, distinctQueryStack, deletedSchemaTable);
+                    break;
+                case TRUNCATE:
+                    executeDropQuery(sqlgGraph, sql, new LinkedList<>(), deletedSchemaTable);
+                    break;
+                default:
+                    throw new IllegalStateException("Unknown DROP_QUERY " + dropQuery.toString());
+            }
+        }
     }
 
     public static Triple<ResultSet, ResultSetMetaData, PreparedStatement> executeRegularQuery(
             SqlgGraph sqlgGraph,
             SchemaTableTree rootSchemaTableTree,
-            RecordId recordId,
             LinkedList<SchemaTableTree> distinctQueryStack) {
 
         String sql = rootSchemaTableTree.constructSql(distinctQueryStack);
-        return executeQuery(sqlgGraph, recordId, sql, distinctQueryStack);
+        return executeQuery(sqlgGraph, sql, distinctQueryStack);
     }
 
     public static Triple<ResultSet, ResultSetMetaData, PreparedStatement> executeOptionalQuery(
-            SqlgGraph sqlgGraph, SchemaTableTree rootSchemaTableTree, RecordId recordId,
+            SqlgGraph sqlgGraph, SchemaTableTree rootSchemaTableTree,
             Pair<LinkedList<SchemaTableTree>, Set<SchemaTableTree>> leftJoinQuery) {
 
         String sql = rootSchemaTableTree.constructSqlForOptional(leftJoinQuery.getLeft(), leftJoinQuery.getRight());
         LinkedList<SchemaTableTree> distinctQueryStack = leftJoinQuery.getLeft();
-        return executeQuery(sqlgGraph, recordId, sql, distinctQueryStack);
+        return executeQuery(sqlgGraph, sql, distinctQueryStack);
     }
 
     public static Triple<ResultSet, ResultSetMetaData, PreparedStatement> executeEmitQuery(
-            SqlgGraph sqlgGraph, SchemaTableTree rootSchemaTableTree, RecordId recordId,
+            SqlgGraph sqlgGraph, SchemaTableTree rootSchemaTableTree,
             LinkedList<SchemaTableTree> leftJoinQuery) {
 
         String sql = rootSchemaTableTree.constructSqlForEmit(leftJoinQuery);
-        return executeQuery(sqlgGraph, recordId, sql, leftJoinQuery);
+        return executeQuery(sqlgGraph, sql, leftJoinQuery);
     }
 
-    private static Triple<ResultSet, ResultSetMetaData, PreparedStatement> executeQuery(SqlgGraph sqlgGraph, RecordId recordId, String sql, LinkedList<SchemaTableTree> distinctQueryStack) {
+    private static Triple<ResultSet, ResultSetMetaData, PreparedStatement> executeQuery(SqlgGraph sqlgGraph, String sql, LinkedList<SchemaTableTree> distinctQueryStack) {
+        if (sqlgGraph.tx().isInBatchMode()) {
+            sqlgGraph.tx().flush();
+        }
         try {
+            if (distinctQueryStack.peekFirst().getStepType() != SchemaTableTree.STEP_TYPE.GRAPH_STEP) {
+                Preconditions.checkState(!distinctQueryStack.peekFirst().getParentIdsAndIndexes().isEmpty());
+            }
+            Connection conn = sqlgGraph.tx().getConnection();
+            if (logger.isDebugEnabled()) {
+                logger.debug(sql);
+            }
+            // explain plan can be useful for performance issues
+            // uncomment if needed, don't think we need this in production
+//            if (logger.isTraceEnabled()){
+//            	String expl="EXPLAIN "+sql;
+//            	try {
+//	            	try (PreparedStatement stmt=conn.prepareStatement(expl)){
+//	                    int parameterCount = 1;
+//	                    if (recordId != null) {
+//	                        stmt.setLong(parameterCount++, recordId.getId());
+//	                    }
+//	                    SqlgUtil.setParametersOnStatement(sqlgGraph, distinctQueryStack, conn, stmt, parameterCount);
+//	            		try(ResultSet rs=stmt.executeQuery()){
+//	            			while(rs.next()){
+//	            				System.out.println(rs.getString(1));
+//	            			}
+//	            		}
+//	            		
+//	            		
+//	            	}
+//            	} catch (SQLException sqle){
+//            		logger.warn(expl);
+//            		logger.warn(sqle.getMessage());
+//            	}
+//            }
+            PreparedStatement preparedStatement = conn.prepareStatement(sql);
+            sqlgGraph.tx().add(preparedStatement);
+            int parameterCount = 1;
+            SqlgUtil.setParametersOnStatement(sqlgGraph, distinctQueryStack, preparedStatement, parameterCount);
+            // https://jdbc.postgresql.org/documentation/head/query.html#query-with-cursor
+            // this is critical to use a cursor, otherwise we load everything into memory
+            if (sqlgGraph.tx().getFetchSize()!=null){
+            	 preparedStatement.setFetchSize(sqlgGraph.tx().getFetchSize());
+            }
+            ResultSet resultSet = preparedStatement.executeQuery();
+            ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
+            return Triple.of(resultSet, resultSetMetaData, preparedStatement);
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void executeDropQuery(SqlgGraph sqlgGraph, String sql, LinkedList<SchemaTableTree> distinctQueryStack, SchemaTable deletedSchemaTable) {
+        if (sqlgGraph.tx().isInBatchMode()) {
+            sqlgGraph.tx().flush();
+        }
+        try {
+            if (!distinctQueryStack.isEmpty() && distinctQueryStack.peekFirst().getStepType() != SchemaTableTree.STEP_TYPE.GRAPH_STEP) {
+                Preconditions.checkState(!distinctQueryStack.peekFirst().getParentIdsAndIndexes().isEmpty());
+            }
             Connection conn = sqlgGraph.tx().getConnection();
             if (logger.isDebugEnabled()) {
                 logger.debug(sql);
@@ -60,16 +162,56 @@ public class SqlgSqlExecutor {
             PreparedStatement preparedStatement = conn.prepareStatement(sql);
             sqlgGraph.tx().add(preparedStatement);
             int parameterCount = 1;
-            if (recordId != null) {
-                preparedStatement.setLong(parameterCount++, recordId.getId());
+            SqlgUtil.setParametersOnStatement(sqlgGraph, distinctQueryStack, preparedStatement, parameterCount);
+            if (distinctQueryStack.isEmpty()) {
+                preparedStatement.execute();
+            } else {
+                preparedStatement.execute();
             }
-            SqlgUtil.setParametersOnStatement(sqlgGraph, distinctQueryStack, conn, preparedStatement, parameterCount);
-//            preparedStatement.setFetchSize(100_000);
-            ResultSet resultSet = preparedStatement.executeQuery();
-            ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
-            return Triple.of(resultSet, resultSetMetaData, preparedStatement);
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public static void executeDropEdges(SqlgGraph sqlgGraph, EdgeLabel edgeLabel, String sql, List<EventCallback<Event>> mutatingCallbacks) {
+        try {
+            Connection conn = sqlgGraph.tx().getConnection();
+            if (logger.isDebugEnabled()) {
+                logger.debug(sql);
+            }
+            try (Statement statement = conn.createStatement()) {
+                if (mutatingCallbacks.isEmpty()) {
+                    statement.execute(sql);
+                } else {
+                    ResultSet resultSet = statement.executeQuery(sql);
+                    while (resultSet.next()) {
+                        Long id = resultSet.getLong(1);
+                        final Event removeEvent;
+                        removeEvent = new Event.EdgeRemovedEvent(SqlgEdge.of(sqlgGraph, id, edgeLabel.getSchema().getName(), edgeLabel.getName()));
+                        for (EventCallback<Event> eventCallback : mutatingCallbacks) {
+                            eventCallback.accept(removeEvent);
+                        }
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+
+    public static void executeDrop(SqlgGraph sqlgGraph, String sql) {
+        try {
+            Connection conn = sqlgGraph.tx().getConnection();
+            if (logger.isDebugEnabled()) {
+                logger.debug(sql);
+            }
+            try (Statement statement = conn.createStatement()) {
+                statement.execute(sql);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
     }
 }

@@ -1,15 +1,20 @@
 package org.umlg.sqlg.sql.dialect;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.tuple.Triple;
 import org.apache.tinkerpop.gremlin.structure.Property;
 import org.hsqldb.jdbc.JDBCArrayBasic;
+import org.hsqldb.lib.StringConverter;
 import org.hsqldb.types.Type;
 import org.umlg.sqlg.structure.PropertyType;
 import org.umlg.sqlg.structure.SchemaTable;
+import org.umlg.sqlg.structure.SqlgExceptions;
 import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.util.SqlgUtil;
 
+import java.io.IOException;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
@@ -18,7 +23,7 @@ import java.util.*;
  * Date: 2014/07/16
  * Time: 3:09 PM
  */
-public class HsqldbDialect extends BaseSqlDialect {
+public class HsqldbDialect extends BaseSqlDialect implements SqlBulkDialect {
 
     public HsqldbDialect() {
         super();
@@ -30,8 +35,156 @@ public class HsqldbDialect extends BaseSqlDialect {
     }
 
     @Override
-    public Set<String> getDefaultSchemas() {
-        return new HashSet<>(Arrays.asList("PUBLIC", "INFORMATION_SCHEMA", "SYSTEM_LOBS"));
+    public Set<String> getInternalSchemas() {
+        return new HashSet<>(Arrays.asList("INFORMATION_SCHEMA", "SYSTEM_LOBS"));
+    }
+
+    @Override
+    public String valueToValuesString(PropertyType propertyType, Object value) {
+        Preconditions.checkState(supportsType(propertyType), "PropertyType %s is not supported", propertyType.name());
+        switch (propertyType) {
+            case STRING:
+                return "'" + escapeQuotes(value.toString()) + "'";
+            case STRING_ARRAY:
+                return toValuesArray(true, value).toString();
+            case BYTE:
+                return value.toString();
+            case byte_ARRAY:
+                return StringConverter.byteArrayToSQLHexString((byte[]) value);
+            case BYTE_ARRAY:
+                return StringConverter.byteArrayToSQLHexString(
+                        SqlgUtil.convertObjectArrayToBytePrimitiveArray((Byte[]) value)
+                );
+            case BOOLEAN:
+                return value.toString();
+            case boolean_ARRAY:
+                return toValuesArray(false, value).toString();
+            case BOOLEAN_ARRAY:
+                return toValuesArray(false, value).toString();
+            case SHORT:
+                return value.toString();
+            case short_ARRAY:
+                return toValuesArray(false, value).toString();
+            case SHORT_ARRAY:
+                return toValuesArray(false, value).toString();
+            case INTEGER:
+                return value.toString();
+            case int_ARRAY:
+                return toValuesArray(false, value).toString();
+            case INTEGER_ARRAY:
+                return toValuesArray(false, value).toString();
+            case LONG:
+                return value.toString();
+            case long_ARRAY:
+                return toValuesArray(false, value).toString();
+            case LONG_ARRAY:
+                return toValuesArray(false, value).toString();
+            case DOUBLE:
+                return value.toString();
+            case double_ARRAY:
+                return toValuesArray(false, value).toString();
+            case DOUBLE_ARRAY:
+                return toValuesArray(false, value).toString();
+            case LOCALDATE:
+                return "'" + value.toString() + "'";
+            case LOCALDATE_ARRAY:
+                return toValuesArray(true, getArrayDriverType(propertyType), value).toString();
+            case LOCALDATETIME:
+                return "TIMESTAMP '" + Timestamp.valueOf((LocalDateTime) value).toString() + "'";
+            case LOCALDATETIME_ARRAY:
+                return toLocalDateTimeArray(true, getArrayDriverType(propertyType), value).toString();
+            case LOCALTIME:
+                return "TIME '" + Time.valueOf((LocalTime) value).toString() + "'";
+            case LOCALTIME_ARRAY:
+                return toLocalTimeArray(true, getArrayDriverType(propertyType), value).toString();
+            case JSON:
+                return "'" + value.toString() + "'";
+            case JSON_ARRAY:
+                return toValuesArray(true, value).toString();
+            default:
+                throw SqlgExceptions.invalidPropertyType(propertyType);
+        }
+    }
+
+    private StringBuilder toValuesArray(boolean quote, Object value) {
+        return toValuesArray(quote, "", value);
+    }
+
+    private StringBuilder toValuesArray(boolean quote, String type, Object value) {
+        StringBuilder sb;
+        int length;
+        sb = new StringBuilder();
+        sb.append("ARRAY [");
+        length = java.lang.reflect.Array.getLength(value);
+        for (int i = 0; i < length; i++) {
+            String valueOfArray = java.lang.reflect.Array.get(value, i).toString();
+            sb.append(type);
+            sb.append(" ");
+            if (quote) {
+                sb.append("'");
+            }
+            sb.append(valueOfArray);
+            if (quote) {
+                sb.append("'");
+            }
+            if (i < length - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("]");
+        return sb;
+    }
+
+    private StringBuilder toLocalDateTimeArray(boolean quote, String type, Object value) {
+        StringBuilder sb;
+        int length;
+        sb = new StringBuilder();
+        sb.append("ARRAY [");
+        length = java.lang.reflect.Array.getLength(value);
+        for (int i = 0; i < length; i++) {
+            LocalDateTime valueOfArray = (LocalDateTime) java.lang.reflect.Array.get(value, i);
+            sb.append(type);
+            sb.append(" ");
+            if (quote) {
+                sb.append("'");
+            }
+            sb.append(Timestamp.valueOf(valueOfArray).toString());
+            sb.append("+0:00");
+            if (quote) {
+                sb.append("'");
+            }
+            if (i < length - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("]");
+        return sb;
+    }
+
+    private StringBuilder toLocalTimeArray(boolean quote, String type, Object value) {
+        StringBuilder sb;
+        int length;
+        sb = new StringBuilder();
+        sb.append("ARRAY [");
+        length = java.lang.reflect.Array.getLength(value);
+        for (int i = 0; i < length; i++) {
+            LocalTime valueOfArray = (LocalTime) java.lang.reflect.Array.get(value, i);
+            sb.append(type);
+            sb.append(" ");
+            if (quote) {
+                sb.append("'");
+            }
+            sb.append(Time.valueOf(valueOfArray).toString());
+            sb.append("+0:00");
+            if (quote) {
+                sb.append("'");
+            }
+            if (i < length - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("]");
+        return sb;
     }
 
     @Override
@@ -101,6 +254,9 @@ public class HsqldbDialect extends BaseSqlDialect {
         if (value instanceof Duration) {
             return;
         }
+        if (value instanceof JsonNode) {
+            return;
+        }
         if (value instanceof byte[]) {
             return;
         }
@@ -164,6 +320,9 @@ public class HsqldbDialect extends BaseSqlDialect {
         if (value instanceof Period[]) {
             return;
         }
+        if (value instanceof JsonNode[]) {
+            return;
+        }
         throw Property.Exceptions.dataTypeOfPropertyValueNotSupported(value);
     }
 
@@ -212,7 +371,7 @@ public class HsqldbDialect extends BaseSqlDialect {
             case STRING:
                 return new String[]{"LONGVARCHAR"};
             case JSON:
-                throw new IllegalStateException("HSQLDB does not support json types, use good ol string instead!");
+                return new String[]{"LONGVARCHAR"};
             case POINT:
                 throw new IllegalStateException("HSQLDB does not support gis types!");
             case POLYGON:
@@ -261,53 +420,88 @@ public class HsqldbDialect extends BaseSqlDialect {
                 return new String[]{"BIGINT ARRAY DEFAULT ARRAY[]", "INTEGER ARRAY DEFAULT ARRAY[]"};
             case PERIOD_ARRAY:
                 return new String[]{"INTEGER ARRAY DEFAULT ARRAY[]", "INTEGER ARRAY DEFAULT ARRAY[]", "INTEGER ARRAY DEFAULT ARRAY[]"};
+            case JSON_ARRAY:
+                return new String[]{"LONGVARCHAR ARRAY DEFAULT ARRAY[]"};
             default:
                 throw new IllegalStateException("Unknown propertyType " + propertyType.name());
         }
     }
 
     @Override
-    public int propertyTypeToJavaSqlType(PropertyType propertyType) {
+    public int[] propertyTypeToJavaSqlType(PropertyType propertyType) {
         switch (propertyType) {
             case BOOLEAN:
-                return Types.BOOLEAN;
+                return new int[]{Types.BOOLEAN};
             case BYTE:
-                return Types.TINYINT;
+                return new int[]{Types.TINYINT};
             case SHORT:
-                return Types.SMALLINT;
+                return new int[]{Types.SMALLINT};
             case INTEGER:
-                return Types.INTEGER;
+                return new int[]{Types.INTEGER};
             case LONG:
-                return Types.BIGINT;
+                return new int[]{Types.BIGINT};
             case DOUBLE:
-                return Types.DOUBLE;
+                return new int[]{Types.DOUBLE};
             case STRING:
-                return Types.CLOB;
+                return new int[]{Types.CLOB};
             case LOCALDATETIME:
-                return Types.TIMESTAMP;
+                return new int[]{Types.TIMESTAMP};
             case LOCALDATE:
-                return Types.DATE;
+                return new int[]{Types.DATE};
             case LOCALTIME:
-                return Types.TIME;
+                return new int[]{Types.TIME};
+            case ZONEDDATETIME:
+                return new int[]{Types.TIMESTAMP, Types.CLOB};
+            case PERIOD:
+                return new int[]{Types.INTEGER, Types.INTEGER, Types.INTEGER};
+            case DURATION:
+                return new int[]{Types.BIGINT, Types.INTEGER};
             case JSON:
-                //TODO support other others like Geometry...
-                return Types.OTHER;
+                return new int[]{Types.CLOB};
+            case BYTE_ARRAY:
+                return new int[]{Types.ARRAY};
             case byte_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
             case boolean_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case BOOLEAN_ARRAY:
+                return new int[]{Types.ARRAY};
             case short_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case SHORT_ARRAY:
+                return new int[]{Types.ARRAY};
             case int_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case INTEGER_ARRAY:
+                return new int[]{Types.ARRAY};
             case long_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case LONG_ARRAY:
+                return new int[]{Types.ARRAY};
             case float_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case FLOAT_ARRAY:
+                return new int[]{Types.ARRAY};
             case double_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case DOUBLE_ARRAY:
+                return new int[]{Types.ARRAY};
             case STRING_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case LOCALDATETIME_ARRAY:
+                return new int[]{Types.ARRAY};
+            case LOCALDATE_ARRAY:
+                return new int[]{Types.ARRAY};
+            case LOCALTIME_ARRAY:
+                return new int[]{Types.ARRAY};
+            case ZONEDDATETIME_ARRAY:
+                return new int[]{Types.ARRAY, Types.ARRAY};
+            case DURATION_ARRAY:
+                return new int[]{Types.ARRAY, Types.ARRAY};
+            case PERIOD_ARRAY:
+                return new int[]{Types.ARRAY, Types.ARRAY, Types.ARRAY};
+            case JSON_ARRAY:
+                return new int[]{Types.ARRAY};
             default:
                 throw new IllegalStateException("Unknown propertyType " + propertyType.name());
         }
@@ -330,7 +524,7 @@ public class HsqldbDialect extends BaseSqlDialect {
                 return PropertyType.DOUBLE;
             case Types.VARCHAR:
                 return PropertyType.STRING;
-            case Types.TIMESTAMP:
+            case Types.TIMESTAMP_WITH_TIMEZONE:
                 return PropertyType.LOCALDATETIME;
             case Types.DATE:
                 return PropertyType.LOCALDATE;
@@ -474,11 +668,6 @@ public class HsqldbDialect extends BaseSqlDialect {
     }
 
     @Override
-    public void setJson(PreparedStatement preparedStatement, int parameterStartIndex, JsonNode right) {
-        throw new IllegalStateException("Hsqldb does not support json types, this should not have happened!");
-    }
-
-    @Override
     public void setPoint(PreparedStatement preparedStatement, int parameterStartIndex, Object point) {
         throw new IllegalStateException("Hsqldb does not support gis types, this should not have happened!");
     }
@@ -496,11 +685,6 @@ public class HsqldbDialect extends BaseSqlDialect {
     @Override
     public void setGeographyPoint(PreparedStatement preparedStatement, int parameterStartIndex, Object point) {
         throw new IllegalStateException("Hsqldb does not support gis types, this should not have happened!");
-    }
-
-    @Override
-    public void handleOther(Map<String, Object> properties, String columnName, Object o, PropertyType propertyType) {
-        throw new IllegalStateException("Hsqldb does not support other types, this should not have happened!");
     }
 
     @Override
@@ -534,8 +718,13 @@ public class HsqldbDialect extends BaseSqlDialect {
     }
 
     @Override
+    public boolean supportsBatchMode() {
+        return true;
+    }
+
+    @Override
     public boolean supportsBulkWithinOut() {
-        return false;
+        return true;
     }
 
     @Override
@@ -552,6 +741,7 @@ public class HsqldbDialect extends BaseSqlDialect {
     public List<String> sqlgTopologyCreationScripts() {
         List<String> result = new ArrayList<>();
 
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_graph\" (\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP WITH TIME ZONE, \"updatedOn\" TIMESTAMP WITH TIME ZONE, \"version\" LONGVARCHAR);");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_schema\" (\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP WITH TIME ZONE, \"name\" LONGVARCHAR);");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_vertex\" (\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP WITH TIME ZONE, \"name\" LONGVARCHAR, \"schemaVertex\" LONGVARCHAR);");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_edge\" (\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP WITH TIME ZONE, \"name\" LONGVARCHAR);");
@@ -561,27 +751,32 @@ public class HsqldbDialect extends BaseSqlDialect {
                 "\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                 "\"createdOn\" TIMESTAMP WITH TIME ZONE, " +
                 "\"name\" LONGVARCHAR);");
-//                "CONSTRAINT propertyUniqueConstraint UNIQUE(name));");
 
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_schema_vertex\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.vertex__I\" BIGINT, \"sqlg_schema.schema__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.vertex__I\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.schema__O\") REFERENCES \"sqlg_schema\".\"V_schema\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_in_edges\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.edge__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.edge__I\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_out_edges\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.edge__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.edge__I\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_vertex_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_edge_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.edge__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.edge__O\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_vertex_index\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.index__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.index__I\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_edge_index\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.index__I\" BIGINT, \"sqlg_schema.edge__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.index__I\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.edge__O\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_index_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.index__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.index__O\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"));");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_schema_vertex\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.vertex__I\" BIGINT, \"sqlg_schema.schema__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.vertex__I\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.schema__O\") REFERENCES \"sqlg_schema\".\"V_schema\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_in_edges\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.edge__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.edge__I\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_out_edges\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.edge__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.edge__I\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_vertex_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_edge_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.edge__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.edge__O\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_vertex_index\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.index__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.index__I\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_edge_index\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.index__I\" BIGINT, \"sqlg_schema.edge__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.index__I\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.edge__O\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\") ON DELETE CASCADE);");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_index_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.index__O\" BIGINT, \"sequence\" INTEGER, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.index__O\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\") ON DELETE CASCADE);");
 
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_log\" (\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"timestamp\" TIMESTAMP WITH TIME ZONE, \"pid\" INTEGER, \"log\" LONGVARCHAR);");
 
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_globalUniqueIndex_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.globalUniqueIndex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.globalUniqueIndex__O\") REFERENCES \"sqlg_schema\".\"V_globalUniqueIndex\" (\"ID\"));");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_globalUniqueIndex_property\"(\"ID\" BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.globalUniqueIndex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\") ON DELETE CASCADE, FOREIGN KEY (\"sqlg_schema.globalUniqueIndex__O\") REFERENCES \"sqlg_schema\".\"V_globalUniqueIndex\" (\"ID\") ON DELETE CASCADE);");
         return result;
     }
 
     @Override
-    public String sqlgAddPropertyIndexTypeColumn() {
-        return "ALTER TABLE \"sqlg_schema\".\"V_property\" ADD COLUMN \"index_type\" LONGVARCHAR DEFAULT 'NONE';";
+    public String sqlgCreateTopologyGraph() {
+        return null;
     }
+
+    @Override
+    public String sqlgAddIndexEdgeSequenceColumn() {
+        return "ALTER TABLE \"sqlg_schema\".\"E_index_property\" ADD COLUMN \"sequence\" INTEGER DEFAULT 0;";
+    }
+    
 
     @Override
     public Long getPrimaryKeyStartValue() {
@@ -642,6 +837,9 @@ public class HsqldbDialect extends BaseSqlDialect {
             case ZONEDDATETIME_ARRAY:
                 type = Type.SQL_TIMESTAMP_WITH_TIME_ZONE;
                 break;
+            case JSON_ARRAY:
+                type = Type.SQL_VARCHAR;
+                break;
             default:
                 throw new IllegalStateException("Unhandled array type " + propertyType.name());
         }
@@ -686,6 +884,20 @@ public class HsqldbDialect extends BaseSqlDialect {
             case LOCALTIME_ARRAY:
                 Object[] times = (Object[]) array.getArray();
                 return SqlgUtil.copyObjectArrayOfTimeToLocalTime(times, new LocalTime[times.length]);
+            case JSON_ARRAY:
+                String[] jsons = SqlgUtil.convertObjectOfStringsArrayToStringArray((Object[]) array.getArray());
+                JsonNode[] jsonNodes = new JsonNode[jsons.length];
+                ObjectMapper objectMapper = new ObjectMapper();
+                int count = 0;
+                for (String json : jsons) {
+                    try {
+                        JsonNode jsonNode = objectMapper.readTree(json);
+                        jsonNodes[count++] = jsonNode;
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return jsonNodes;
             default:
                 throw new IllegalStateException("Unhandled property type " + propertyType.name());
         }
@@ -695,5 +907,101 @@ public class HsqldbDialect extends BaseSqlDialect {
     public void setArray(PreparedStatement statement, int index, PropertyType type,
                          Object[] values) throws SQLException {
         statement.setArray(index, createArrayOf(statement.getConnection(), type, values));
+    }
+
+    @Override
+    public boolean isSystemIndex(String indexName) {
+        return indexName.startsWith("SYS_IDX_") || indexName.startsWith("SYS_PK") || indexName.endsWith("SYS_FK");
+    }
+
+    @Override
+    public boolean supportsJsonArrayValues() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsType(PropertyType propertyType) {
+        switch (propertyType) {
+            case BOOLEAN:
+                return true;
+            case BOOLEAN_ARRAY:
+                return true;
+            case boolean_ARRAY:
+                return true;
+            case BYTE:
+                return true;
+            case BYTE_ARRAY:
+                return true;
+            case byte_ARRAY:
+                return true;
+            case SHORT:
+                return true;
+            case short_ARRAY:
+                return true;
+            case SHORT_ARRAY:
+                return true;
+            case INTEGER:
+                return true;
+            case int_ARRAY:
+                return true;
+            case INTEGER_ARRAY:
+                return true;
+            case LONG:
+                return true;
+            case long_ARRAY:
+                return true;
+            case LONG_ARRAY:
+                return true;
+            case DOUBLE:
+                return true;
+            case DOUBLE_ARRAY:
+                return true;
+            case double_ARRAY:
+                return true;
+            case STRING:
+                return true;
+            case LOCALDATE:
+                return true;
+            case LOCALDATE_ARRAY:
+                return true;
+            case LOCALDATETIME:
+                return true;
+            case LOCALDATETIME_ARRAY:
+                return true;
+            case LOCALTIME:
+                return true;
+            case LOCALTIME_ARRAY:
+                return true;
+            case JSON:
+                return true;
+            case STRING_ARRAY:
+                return true;
+            case JSON_ARRAY:
+                return true;
+            default:
+                throw new IllegalStateException("Unknown propertyType " + propertyType.name());
+        }
+    }
+
+
+    @Override
+    public String createSchemaStatement(String schemaName) {
+        // if ever schema is created outside of sqlg while the graph is already instantiated
+        return "CREATE SCHEMA IF NOT EXISTS " + maybeWrapInQoutes(schemaName);
+    }
+
+    @Override
+    public boolean isHsqldb() {
+        return true;
+    }
+
+    @Override
+    public String sqlToTurnOffReferentialConstraintCheck(String tableName) {
+        return "SET DATABASE REFERENTIAL INTEGRITY FALSE";
+    }
+
+    @Override
+    public String sqlToTurnOnReferentialConstraintCheck(String tableName) {
+        return "SET DATABASE REFERENTIAL INTEGRITY TRUE";
     }
 }

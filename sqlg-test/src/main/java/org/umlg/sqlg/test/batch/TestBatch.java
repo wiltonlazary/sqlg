@@ -7,7 +7,6 @@ import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
 import org.junit.*;
-import org.umlg.sqlg.structure.RecordId;
 import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.structure.SqlgVertex;
 import org.umlg.sqlg.test.BaseTest;
@@ -29,7 +28,7 @@ public class TestBatch extends BaseTest {
     @BeforeClass
     public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
         BaseTest.beforeClass();
-        if (configuration.getString("jdbc.url").contains("postgresql")) {
+        if (isPostgres()) {
             configuration.addProperty("distributed", true);
         }
     }
@@ -37,6 +36,29 @@ public class TestBatch extends BaseTest {
     @Before
     public void beforeTest() {
         Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsBatchMode());
+    }
+
+    @Test
+    public void testBatchNormalModeFlushWrapsInQuotes() {
+        this.sqlgGraph.tx().normalBatchModeOn();
+        String vertexLabel = "schem\"a.tabl\"e";
+        String edgeLabel = "edg\"e";
+        Vertex vertex1 = this.sqlgGraph.addVertex(T.label, vertexLabel, "name", "test1");
+        Vertex vertex2 = this.sqlgGraph.addVertex(T.label, vertexLabel, "name", "test2");
+        Edge edge = vertex1.addEdge(edgeLabel, vertex2);
+        this.sqlgGraph.tx().flush();
+        Assert.assertNotNull(vertex1.id());
+        Assert.assertNotNull(vertex2.id());
+        Assert.assertNotNull(edge.id());
+    }
+
+    @Test
+    public void testBatchNormalModeFlushWrapsInQuotesSimple() {
+        this.sqlgGraph.tx().normalBatchModeOn();
+        String vertexLabel = "B\"B.B\"B";
+        Vertex vertex1 = this.sqlgGraph.addVertex(T.label, vertexLabel, "name", "test1");
+        this.sqlgGraph.tx().commit();
+        Assert.assertNotNull(vertex1.id());
     }
 
     @Test
@@ -52,6 +74,8 @@ public class TestBatch extends BaseTest {
             v.property("value", "Rio’s Supermarket");
         }
         this.sqlgGraph.tx().commit();
+        Assert.assertEquals(1001, this.sqlgGraph.traversal().V().hasLabel("A").has("value", "Rio’s Supermarket").count().next(), 0);
+        Assert.assertEquals(1001, this.sqlgGraph.traversal().V().hasLabel("A").has("name", "<NULL>").count().next(), 0);
     }
 
     @Test
@@ -354,7 +378,7 @@ public class TestBatch extends BaseTest {
                 firstLatch.countDown();
                 sqlgGraph.tx().commit();
                 List<Vertex> persons = sqlgGraph.traversal().V().<Vertex>has(T.label, "Person").toList();
-                lastPerson.set(((RecordId) persons.get(persons.size() - 1).id()).getId());
+                lastPerson.set(persons.size());
             } catch (Exception e) {
                 e.printStackTrace();
                 Assert.fail(e.getMessage());
@@ -376,7 +400,7 @@ public class TestBatch extends BaseTest {
             v1.addEdge("Same", v2);
             sqlgGraph.tx().commit();
             List<Vertex> cars = sqlgGraph.traversal().V().<Vertex>has(T.label, "Car").toList();
-            lastCar.set(((RecordId) cars.get(cars.size() - 1).id()).getId());
+            lastCar.set(cars.size());
         });
         thread2.start();
         thread1.join();
@@ -1031,7 +1055,7 @@ public class TestBatch extends BaseTest {
         int j = 1;
         //createVertexLabel 280 foreign keys
         for (int i = 0; i < 2810; i++) {
-            Vertex v1 = this.sqlgGraph.addVertex(T.label, "public.WorkspaceElement", "name", "workspaceElement" + i);
+            Vertex v1 = this.sqlgGraph.addVertex(T.label, this.sqlgGraph.getSqlDialect().getPublicSchema() + ".WorkspaceElement", "name", "workspaceElement" + i);
             if (j == 281) {
                 j = 1;
             }
@@ -1045,7 +1069,7 @@ public class TestBatch extends BaseTest {
         System.out.println(stopWatch.toString());
         stopWatch.reset();
         stopWatch.start();
-        List<Vertex> vertexes = this.sqlgGraph.traversal().V().has(T.label, "WorkspaceElement").toList();
+        List<Vertex> vertexes = this.sqlgGraph.traversal().V().has(T.label, this.sqlgGraph.getSqlDialect().getPublicSchema() + ".WorkspaceElement").toList();
         for (Vertex sqlgVertex : vertexes) {
             sqlgVertex.remove();
         }
@@ -1330,6 +1354,22 @@ public class TestBatch extends BaseTest {
         Edge edgeToRoot = root.addEdge("edgeToRoot", god);
         edgeToRoot.property("className", "thisthatandanother");
         this.sqlgGraph.tx().commit();
+        Assert.assertEquals(1, this.sqlgGraph.traversal().V().hasLabel("GOD").count().next(), 0);
+        Assert.assertEquals(god, this.sqlgGraph.traversal().V().hasLabel("GOD").next());
+        Assert.assertEquals(1, this.sqlgGraph.traversal().E().hasLabel("edgeToRoot").count().next(), 0);
+        Assert.assertEquals(edgeToRoot, this.sqlgGraph.traversal().E().hasLabel("edgeToRoot").next());
+        Assert.assertEquals("thisthatandanother", this.sqlgGraph.traversal().E().hasLabel("edgeToRoot").next().value("className"));
+    }
+
+    @Test
+    public void testEmptyEdge() {
+        this.sqlgGraph.tx().normalBatchModeOn();
+        Vertex v1 = this.sqlgGraph.addVertex(T.label, "A");
+        Vertex v2 = this.sqlgGraph.addVertex(T.label, "B");
+        v1.addEdge("ab", v2);
+        this.sqlgGraph.tx().commit();
+        Assert.assertEquals(2, this.sqlgGraph.traversal().V().count().next(), 0);
+        Assert.assertEquals(1, this.sqlgGraph.traversal().E().count().next(), 0);
     }
 
     @Test

@@ -19,11 +19,12 @@ public class PostgresPlugin implements SqlgPlugin {
 
     @Override
     public String getDriverFor(String connectionUrl) {
-        return connectionUrl.startsWith("jdbc:postgresql") ? "org.postgresql.xa.PGXADataSource" : null;
+        return connectionUrl.startsWith("jdbc:postgresql") ? "org.postgresql.Driver" : null;
     }
 
     @Override
     public SqlDialect instantiateDialect() {
         return new PostgresDialect();
     }
+
 }

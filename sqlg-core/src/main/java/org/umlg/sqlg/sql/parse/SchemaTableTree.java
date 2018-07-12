@@ -2,34 +2,38 @@ package org.umlg.sqlg.sql.parse;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
-import org.apache.commons.lang3.Range;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.tuple.Triple;
 import org.apache.tinkerpop.gremlin.process.traversal.*;
 import org.apache.tinkerpop.gremlin.process.traversal.lambda.ElementValueTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.lambda.TokenTraversal;
 import org.apache.tinkerpop.gremlin.process.traversal.step.map.SelectOneStep;
 import org.apache.tinkerpop.gremlin.process.traversal.step.map.VertexStep;
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.ElementValueComparator;
 import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
 import org.apache.tinkerpop.gremlin.structure.*;
-import org.umlg.sqlg.sql.dialect.SqlBulkDialect;
-import org.umlg.sqlg.strategy.BaseSqlgStrategy;
-import org.umlg.sqlg.strategy.TopologyStrategy;
+import org.umlg.sqlg.predicate.Existence;
+import org.umlg.sqlg.predicate.FullText;
+import org.umlg.sqlg.strategy.*;
 import org.umlg.sqlg.structure.PropertyType;
 import org.umlg.sqlg.structure.*;
+import org.umlg.sqlg.structure.topology.EdgeLabel;
+import org.umlg.sqlg.structure.topology.Schema;
+import org.umlg.sqlg.structure.topology.Topology;
+import org.umlg.sqlg.structure.topology.VertexLabel;
 import org.umlg.sqlg.util.SqlgUtil;
 
-import java.io.IOException;
-import java.io.Writer;
 import java.security.SecureRandom;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static org.apache.tinkerpop.gremlin.structure.T.label;
+import static org.umlg.sqlg.structure.topology.Topology.EDGE_PREFIX;
+import static org.umlg.sqlg.structure.topology.Topology.VERTEX_PREFIX;
 
 /**
  * Date: 2015/01/08
@@ -52,7 +56,9 @@ public class SchemaTableTree {
     //leafNodes is only set on the root node;
     private List<SchemaTableTree> leafNodes = new ArrayList<>();
     private List<HasContainer> hasContainers = new ArrayList<>();
-    private List<org.javatuples.Pair<Traversal.Admin, Comparator>> comparators = new ArrayList<>();
+    private List<AndOrHasContainer> andOrHasContainers = new ArrayList<>();
+    private SqlgComparatorHolder sqlgComparatorHolder = new SqlgComparatorHolder();
+    private List<org.javatuples.Pair<Traversal.Admin<?, ?>, Comparator<?>>> dbComparators = new ArrayList<>();
     //labels are immutable
     private Set<String> labels;
     private Set<String> realLabels;
@@ -88,11 +94,19 @@ public class SchemaTableTree {
     private boolean fakeEmit = false;
 
     /**
+     * Indicates the DropStep.
+     */
+    private boolean drop;
+
+    /**
      * range limitation, if any
      */
-    private Range<Long> range;
+    private SqlgRangeHolder sqlgRangeHolder;
+    //This is the incoming element id and the traversals start elements index, for SqlgVertexStep.
+    private List<Pair<Long, Long>> parentIdsAndIndexes;
 
-    enum STEP_TYPE {
+
+    public enum STEP_TYPE {
         GRAPH_STEP,
         VERTEX_STEP,
         EDGE_VERTEX_STEP
@@ -103,10 +117,11 @@ public class SchemaTableTree {
         this.schemaTable = schemaTable;
         this.stepDepth = stepDepth;
         this.hasContainers = new ArrayList<>();
-        this.comparators = new ArrayList<>();
+        this.andOrHasContainers = new ArrayList<>();
+        this.dbComparators = new ArrayList<>();
         this.labels = Collections.emptySet();
         this.replacedStepDepth = replacedStepDepth;
-        this.filteredAllTables = SqlgUtil.filterHasContainers(sqlgGraph.getTopology(), this.hasContainers, Topology.SQLG_SCHEMA.equals(schemaTable.getSchema()));
+        this.filteredAllTables = SqlgUtil.filterSqlgSchemaHasContainers(sqlgGraph.getTopology(), this.hasContainers, Topology.SQLG_SCHEMA.equals(schemaTable.getSchema()));
     }
 
     /**
@@ -116,30 +131,38 @@ public class SchemaTableTree {
      * The hasContainers at this stage contains the {@link TopologyStrategy} from or without hasContainer.
      * After doing the filtering it must be removed from the hasContainers as it must not partake in sql generation.
      */
-    SchemaTableTree(SqlgGraph sqlgGraph, SchemaTable schemaTable, int stepDepth,
+    SchemaTableTree(SqlgGraph sqlgGraph,
+                    SchemaTable schemaTable,
+                    int stepDepth,
                     List<HasContainer> hasContainers,
-                    List<org.javatuples.Pair<Traversal.Admin, Comparator>> comparators,
-                    Range<Long> range,
+                    List<AndOrHasContainer> andOrHasContainers,
+                    SqlgComparatorHolder sqlgComparatorHolder,
+                    List<org.javatuples.Pair<Traversal.Admin<?, ?>, Comparator<?>>> dbComparators,
+                    SqlgRangeHolder sqlgRangeHolder,
                     STEP_TYPE stepType,
                     boolean emit,
                     boolean untilFirst,
                     boolean optionalLeftJoin,
+                    boolean drop,
                     int replacedStepDepth,
                     Set<String> labels
     ) {
         this.sqlgGraph = sqlgGraph;
         this.schemaTable = schemaTable;
         this.stepDepth = stepDepth;
-        this.replacedStepDepth = replacedStepDepth;
         this.hasContainers = hasContainers;
-        this.comparators = comparators;
-        this.range = range;
+        this.andOrHasContainers = andOrHasContainers;
+        this.replacedStepDepth = replacedStepDepth;
+        this.sqlgComparatorHolder = sqlgComparatorHolder;
+        this.dbComparators = dbComparators;
+        this.sqlgRangeHolder = sqlgRangeHolder;
         this.labels = Collections.unmodifiableSet(labels);
         this.stepType = stepType;
         this.emit = emit;
         this.untilFirst = untilFirst;
         this.optionalLeftJoin = optionalLeftJoin;
-        this.filteredAllTables = SqlgUtil.filterHasContainers(sqlgGraph.getTopology(), this.hasContainers, Topology.SQLG_SCHEMA.equals(schemaTable.getSchema()));
+        this.drop = drop;
+        this.filteredAllTables = SqlgUtil.filterSqlgSchemaHasContainers(sqlgGraph.getTopology(), this.hasContainers, Topology.SQLG_SCHEMA.equals(schemaTable.getSchema()));
         initializeAliasColumnNameMaps();
     }
 
@@ -155,13 +178,16 @@ public class SchemaTableTree {
                 direction,
                 elementClass,
                 replacedStep.getHasContainers(),
-                replacedStep.getComparators(),
-                replacedStep.getRange(),
+                replacedStep.getAndOrHasContainers(),
+                replacedStep.getSqlgComparatorHolder(),
+                replacedStep.getSqlgComparatorHolder().getComparators(),
+                replacedStep.getSqlgRangeHolder(),
                 replacedStep.getDepth(),
                 isEdgeVertexStep,
                 replacedStep.isEmit(),
                 replacedStep.isUntilFirst(),
                 replacedStep.isLeftJoin(),
+                replacedStep.isDrop(),
                 labels);
     }
 
@@ -188,13 +214,16 @@ public class SchemaTableTree {
                 direction,
                 elementClass,
                 replacedStep.getHasContainers(),
-                replacedStep.getComparators(),
-                replacedStep.getRange(),
+                replacedStep.getAndOrHasContainers(),
+                replacedStep.getSqlgComparatorHolder(),
+                replacedStep.getSqlgComparatorHolder().getComparators(),
+                replacedStep.getSqlgRangeHolder(),
                 replacedStep.getDepth(),
                 false,
                 emit,
                 replacedStep.isUntilFirst(),
                 replacedStep.isLeftJoin(),
+                replacedStep.isDrop(),
                 labels);
     }
 
@@ -203,21 +232,26 @@ public class SchemaTableTree {
             Direction direction,
             Class<? extends Element> elementClass,
             List<HasContainer> hasContainers,
-            List<org.javatuples.Pair<Traversal.Admin, Comparator>> comparators,
-            Range<Long> range,
+            List<AndOrHasContainer> andOrHasContainers,
+            SqlgComparatorHolder sqlgComparatorHolder,
+            List<org.javatuples.Pair<Traversal.Admin<?, ?>, Comparator<?>>> dbComparators,
+            SqlgRangeHolder sqlgRangeHolder,
             int stepDepth,
             boolean isEdgeVertexStep,
             boolean emit,
             boolean untilFirst,
             boolean leftJoin,
+            boolean drop,
             Set<String> labels) {
 
         SchemaTableTree schemaTableTree = new SchemaTableTree(this.sqlgGraph, schemaTable, stepDepth, this.replacedStepDepth);
-        if ((elementClass.isAssignableFrom(Edge.class) && schemaTable.getTable().startsWith(SchemaManager.EDGE_PREFIX)) ||
-                (elementClass.isAssignableFrom(Vertex.class) && schemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX))) {
+        if ((elementClass.isAssignableFrom(Edge.class) && schemaTable.getTable().startsWith(EDGE_PREFIX)) ||
+                (elementClass.isAssignableFrom(Vertex.class) && schemaTable.getTable().startsWith(VERTEX_PREFIX))) {
             schemaTableTree.hasContainers = new ArrayList<>(hasContainers);
-            schemaTableTree.comparators = new ArrayList<>(comparators);
-            schemaTableTree.range = range;
+            schemaTableTree.andOrHasContainers = new ArrayList<>(andOrHasContainers);
+            schemaTableTree.sqlgComparatorHolder = sqlgComparatorHolder;
+            schemaTableTree.dbComparators = new ArrayList<>(dbComparators);
+            schemaTableTree.sqlgRangeHolder = sqlgRangeHolder;
         }
         schemaTableTree.parent = this;
         schemaTableTree.direction = direction;
@@ -227,6 +261,7 @@ public class SchemaTableTree {
         schemaTableTree.emit = emit;
         schemaTableTree.untilFirst = untilFirst;
         schemaTableTree.optionalLeftJoin = leftJoin;
+        schemaTableTree.drop = drop;
         return schemaTableTree;
     }
 
@@ -253,8 +288,8 @@ public class SchemaTableTree {
                 String alias = entry.getKey();
                 String columnName = entry.getValue();
                 //only load the labelled columns
-                if (!columnName.endsWith(SchemaTableTree.ALIAS_SEPARATOR + SchemaManager.ID) &&
-                        (columnName.contains(BaseSqlgStrategy.PATH_LABEL_SUFFIX) || columnName.contains(BaseSqlgStrategy.EMIT_LABEL_SUFFIX))) {
+                if (!columnName.endsWith(SchemaTableTree.ALIAS_SEPARATOR + Topology.ID) &&
+                        (columnName.contains(BaseStrategy.PATH_LABEL_SUFFIX) || columnName.contains(BaseStrategy.EMIT_LABEL_SUFFIX))) {
 
                     if (containsLabelledColumn(columnName)) {
                         String propertyName = propertyNameFromLabeledAlias(columnName);
@@ -330,8 +365,89 @@ public class SchemaTableTree {
             return constructDuplicatePathSql(this.sqlgGraph, subQueryStacks);
         } else {
             //If there are no duplicates in the path then one select statement will suffice.
-            return constructSinglePathSql(this.sqlgGraph, false, distinctQueryStack, null, null);
+            return constructSinglePathSql(this.sqlgGraph, false, distinctQueryStack, null, null, false);
         }
+    }
+
+    public List<Triple<SqlgSqlExecutor.DROP_QUERY, String, SchemaTable>> constructDropSql(LinkedList<SchemaTableTree> distinctQueryStack) {
+        Preconditions.checkState(this.parent == null, CONSTRUCT_SQL_MAY_ONLY_BE_CALLED_ON_THE_ROOT_OBJECT);
+        Preconditions.checkState(distinctQueryStack.getLast().drop);
+        Preconditions.checkState(!duplicatesInStack(distinctQueryStack));
+
+        if (distinctQueryStack.size() == 1 &&
+                distinctQueryStack.getFirst().getHasContainers().isEmpty() &&
+                distinctQueryStack.getFirst().getAndOrHasContainers().isEmpty() &&
+                (
+                        (this.sqlgGraph.getSqlDialect().supportsTruncateMultipleTablesTogether() && hasOnlyOneInOutEdgeLabel(distinctQueryStack.getFirst().getSchemaTable())) ||
+                                (!this.sqlgGraph.getSqlDialect().supportsTruncateMultipleTablesTogether() && hasNoEdgeLabels(distinctQueryStack.getFirst().getSchemaTable()))
+                )) {
+            //truncate logica.
+            SchemaTableTree schemaTableTree = distinctQueryStack.getFirst();
+            return this.sqlgGraph.getSqlDialect().sqlTruncate(this.sqlgGraph, schemaTableTree.getSchemaTable());
+        } else {
+            String leafNodeToDelete = constructSinglePathSql(this.sqlgGraph, false, distinctQueryStack, null, null, true);
+            resetColumnAliasMaps();
+
+            Optional<String> edgesToDelete = Optional.empty();
+            if (distinctQueryStack.size() > 1 && distinctQueryStack.getLast().getSchemaTable().isVertexTable()) {
+                Set<SchemaTableTree> leftJoin = new HashSet<>();
+                leftJoin.add(distinctQueryStack.getLast());
+                LinkedList<SchemaTableTree> edgeSchemaTableTrees = new LinkedList<>(distinctQueryStack);
+                edgeSchemaTableTrees.removeLast();
+                edgesToDelete = Optional.of(constructSinglePathSql(this.sqlgGraph, false, edgeSchemaTableTrees, null, null, leftJoin, true));
+            }
+            return this.sqlgGraph.getSqlDialect().drop(this.sqlgGraph, leafNodeToDelete, edgesToDelete, distinctQueryStack);
+        }
+
+    }
+
+    private boolean hasOnlyOneInOutEdgeLabel(SchemaTable schemaTable) {
+        Optional<Schema> schemaOptional = sqlgGraph.getTopology().getSchema(schemaTable.getSchema());
+        Preconditions.checkState(schemaOptional.isPresent(), "BUG: %s not found in the topology.", schemaTable.getSchema());
+        Schema schema = schemaOptional.get();
+        boolean result = true;
+        if (schemaTable.isVertexTable()) {
+            //Need to delete any in/out edges.
+            Optional<VertexLabel> vertexLabelOptional = schema.getVertexLabel(schemaTable.withOutPrefix().getTable());
+            Preconditions.checkState(vertexLabelOptional.isPresent(), "BUG: %s not found in the topology.", schemaTable.withOutPrefix().getTable());
+            VertexLabel vertexLabel = vertexLabelOptional.get();
+            Collection<EdgeLabel> outEdgeLabels = vertexLabel.getOutEdgeLabels().values();
+            for (EdgeLabel edgeLabel : outEdgeLabels) {
+                result = edgeLabel.getOutVertexLabels().size() == 1;
+                if (!result) {
+                    break;
+                }
+            }
+            if (result) {
+                Collection<EdgeLabel> inEdgeLabels = vertexLabel.getInEdgeLabels().values();
+                for (EdgeLabel edgeLabel : inEdgeLabels) {
+                    result = edgeLabel.getInVertexLabels().size() == 1;
+                    if (!result) {
+                        break;
+                    }
+                }
+            }
+        }
+        return result;
+
+    }
+
+    private boolean hasNoEdgeLabels(SchemaTable schemaTable) {
+        Optional<Schema> schemaOptional = sqlgGraph.getTopology().getSchema(schemaTable.getSchema());
+        Preconditions.checkState(schemaOptional.isPresent(), "BUG: %s not found in the topology.", schemaTable.getSchema());
+        Schema schema = schemaOptional.get();
+        boolean result = true;
+        if (schemaTable.isVertexTable()) {
+            //Need to delete any in/out edges.
+            Optional<VertexLabel> vertexLabelOptional = schema.getVertexLabel(schemaTable.withOutPrefix().getTable());
+            Preconditions.checkState(vertexLabelOptional.isPresent(), "BUG: %s not found in the topology.", schemaTable.withOutPrefix().getTable());
+            VertexLabel vertexLabel = vertexLabelOptional.get();
+            Collection<EdgeLabel> outEdgeLabels = vertexLabel.getOutEdgeLabels().values();
+            Collection<EdgeLabel> inEdgeLabels = vertexLabel.getInEdgeLabels().values();
+            result = outEdgeLabels.isEmpty() && inEdgeLabels.isEmpty();
+        }
+        return result;
+
     }
 
     public String constructSqlForOptional(LinkedList<SchemaTableTree> innerJoinStack, Set<SchemaTableTree> leftJoinOn) {
@@ -341,7 +457,7 @@ public class SchemaTableTree {
             return constructDuplicatePathSql(this.sqlgGraph, subQueryStacks, leftJoinOn);
         } else {
             //If there are no duplicates in the path then one select statement will suffice.
-            return constructSinglePathSql(this.sqlgGraph, false, innerJoinStack, null, null, leftJoinOn);
+            return constructSinglePathSql(this.sqlgGraph, false, innerJoinStack, null, null, leftJoinOn, false);
         }
     }
 
@@ -354,35 +470,6 @@ public class SchemaTableTree {
             //If there are no duplicates in the path then one select statement will suffice.
             return constructSinglePathSql(this.sqlgGraph, false, innerJoinStack, null, null);
         }
-    }
-
-    /**
-     * @return A Triple. SchemaTableTree is the root of the tree that formed the sql statement.
-     * It is needed to set the values in the where clause.
-     * SchemaTable is the element being returned.
-     * String is the sql.
-     */
-    public List<Pair<LinkedList<SchemaTableTree>, String>> constructSql() {
-        Preconditions.checkState(this.parent == null, CONSTRUCT_SQL_MAY_ONLY_BE_CALLED_ON_THE_ROOT_OBJECT);
-
-        List<Pair<LinkedList<SchemaTableTree>, String>> result = new ArrayList<>();
-        List<LinkedList<SchemaTableTree>> distinctQueries = constructDistinctQueries();
-        for (LinkedList<SchemaTableTree> distinctQueryStack : distinctQueries) {
-
-            //If the same element occurs multiple times in the stack then the sql needs to be different.
-            //This is because the same element can not be joined on more than once in sql
-            //The way to overcome this is  to break up the path in select sections with no duplicates and then join them together.
-            if (duplicatesInStack(distinctQueryStack)) {
-                List<LinkedList<SchemaTableTree>> subQueryStacks = splitIntoSubStacks(distinctQueryStack);
-                String singlePathSql = constructDuplicatePathSql(this.sqlgGraph, subQueryStacks);
-                result.add(Pair.of(distinctQueryStack, singlePathSql));
-            } else {
-                //If there are no duplicates in the path then one select statement will suffice.
-                String singlePathSql = constructSinglePathSql(this.sqlgGraph, false, distinctQueryStack, null, null);
-                result.add(Pair.of(distinctQueryStack, singlePathSql));
-            }
-        }
-        return result;
     }
 
     public List<LinkedList<SchemaTableTree>> constructDistinctQueries() {
@@ -443,15 +530,15 @@ public class SchemaTableTree {
         }
     }
 
-    private static String constructDuplicatePathSql(SqlgGraph sqlgGraph, List<LinkedList<SchemaTableTree>> subQueryLinkedLists) {
+    private String constructDuplicatePathSql(SqlgGraph sqlgGraph, List<LinkedList<SchemaTableTree>> subQueryLinkedLists) {
         return constructDuplicatePathSql(sqlgGraph, subQueryLinkedLists, Collections.emptySet());
     }
 
     /**
      * Construct a sql statement for one original path to a leaf node.
-     * As the path contains the same label more than once it existVertexLabel been split into a List of Stacks.
+     * As the path contains the same label more than once its been split into a List of Stacks.
      */
-    private static String constructDuplicatePathSql(SqlgGraph sqlgGraph, List<LinkedList<SchemaTableTree>> subQueryLinkedLists, Set<SchemaTableTree> leftJoinOn) {
+    private String constructDuplicatePathSql(SqlgGraph sqlgGraph, List<LinkedList<SchemaTableTree>> subQueryLinkedLists, Set<SchemaTableTree> leftJoinOn) {
         String singlePathSql = "\nFROM (";
         int count = 1;
         SchemaTableTree lastOfPrevious = null;
@@ -467,7 +554,8 @@ public class SchemaTableTree {
 
             String sql;
             if (last) {
-                sql = constructSinglePathSql(sqlgGraph, true, subQueryLinkedList, lastOfPrevious, null, leftJoinOn);
+                //only the last step must have dropStep as true. As only the outer select needs only an ID in the select
+                sql = constructSinglePathSql(sqlgGraph, true, subQueryLinkedList, lastOfPrevious, null, leftJoinOn, false);
             } else {
                 sql = constructSinglePathSql(sqlgGraph, true, subQueryLinkedList, lastOfPrevious, firstOfNext);
             }
@@ -477,7 +565,7 @@ public class SchemaTableTree {
             } else {
                 //join the last with the first
                 singlePathSql += "\n) a" + count + " ON ";
-                singlePathSql += constructSectionedJoin(lastOfPrevious, firstSchemaTableTree, count);
+                singlePathSql += constructSectionedJoin(sqlgGraph, lastOfPrevious, firstSchemaTableTree, count);
                 if (count++ < subQueryLinkedLists.size()) {
                     singlePathSql += " INNER JOIN (";
                 }
@@ -489,14 +577,22 @@ public class SchemaTableTree {
         return result + singlePathSql;
     }
 
-    private static String constructOuterFromClause(List<LinkedList<SchemaTableTree>> subQueryLinkedLists) {
+    private String constructOuterFromClause(List<LinkedList<SchemaTableTree>> subQueryLinkedLists) {
         String result = "";
         int countOuter = 1;
         LinkedList<SchemaTableTree> previousSubQuery = null;
+        boolean first = true;
         for (LinkedList<SchemaTableTree> subQueryLinkedList : subQueryLinkedLists) {
 
             int countInner = 1;
             for (SchemaTableTree schemaTableTree : subQueryLinkedList) {
+
+                //print the ID of the incoming element.
+                if (first && subQueryLinkedList.getFirst().stepType != STEP_TYPE.GRAPH_STEP) {
+                    result += "a1." + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("index") + " as " +
+                            this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("index") + ",\n\r";
+                }
+                first = false;
 
                 //labelled entries need to be in the outer select
                 if (!schemaTableTree.getLabels().isEmpty()) {
@@ -530,7 +626,7 @@ public class SchemaTableTree {
     private Optional<String> printEmitMappedAliasIdForOuterFromClause(int countOuter, Map<String, String> columnNameAliasMap) {
         Optional<String> optional = this.mappedAliasIdForOuterFromClause(columnNameAliasMap);
         if (optional.isPresent()) {
-            return Optional.of(" a" + countOuter + ".\"" + optional.get() + "\"");
+            return Optional.of(" a" + countOuter + "." + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(optional.get()));
         } else {
             return Optional.empty();
         }
@@ -539,17 +635,29 @@ public class SchemaTableTree {
     private static String constructOuterOrderByClause(SqlgGraph sqlgGraph, List<LinkedList<SchemaTableTree>> subQueryLinkedLists) {
         String result = "";
         int countOuter = 1;
+        // last table list with order as last step wins
+        int winningOrder = 0;
+        for (LinkedList<SchemaTableTree> subQueryLinkedList : subQueryLinkedLists) {
+            if (!subQueryLinkedList.isEmpty()) {
+                SchemaTableTree schemaTableTree = subQueryLinkedList.peekLast();
+                if (!schemaTableTree.getDbComparators().isEmpty()
+                        ) {
+                    winningOrder = countOuter;
+                }
+            }
+            countOuter++;
+        }
+        countOuter = 1;
         //construct the order by clause for the comparators
         MutableBoolean mutableOrderBy = new MutableBoolean(false);
         for (LinkedList<SchemaTableTree> subQueryLinkedList : subQueryLinkedLists) {
-            int countInner = 1;
-            for (SchemaTableTree schemaTableTree : subQueryLinkedList) {
-                //last entry, only order on the last entry as duplicate paths are for the same SchemaTable
-                if (countOuter == subQueryLinkedLists.size() && countInner == subQueryLinkedList.size()) {
+            if (!subQueryLinkedList.isEmpty()) {
+                SchemaTableTree schemaTableTree = subQueryLinkedList.peekLast();
+                if (countOuter == winningOrder) {
                     result += schemaTableTree.toOrderByClause(sqlgGraph, mutableOrderBy, countOuter);
-                    result += schemaTableTree.toRangeClause(sqlgGraph);
                 }
-                countInner++;
+                // support range without order
+                result += schemaTableTree.toRangeClause(sqlgGraph, mutableOrderBy);
             }
             countOuter++;
         }
@@ -561,17 +669,17 @@ public class SchemaTableTree {
         Map<String, PropertyType> propertyTypeMap = this.getFilteredAllTables().get(this.toString());
         Optional<String> optional = this.lastMappedAliasIdForOuterFrom(columnNameAliasMapCopy);
         if (optional.isPresent()) {
-            sql = "a" + count + ".\"" + optional.get() + "\"";
+            sql = "a" + count + "." + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(optional.get());
             if (propertyTypeMap.size() > 0) {
                 sql += ", ";
             }
         }
         int propertyCount = 1;
         for (Map.Entry<String, PropertyType> propertyNameEntry : propertyTypeMap.entrySet()) {
-            sql += "a" + count + ".\"" + this.mappedAliasPropertyName(propertyNameEntry.getKey(), columnNameAliasMapCopy) + "\"";
+            sql += "a" + count + "." + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.mappedAliasPropertyName(propertyNameEntry.getKey(), columnNameAliasMapCopy));
             for (String postFix : propertyNameEntry.getValue().getPostFixes()) {
                 sql += ", ";
-                sql += "a" + count + ".\"" + this.mappedAliasPropertyName(propertyNameEntry.getKey() + postFix, columnNameAliasMapCopy) + "\"";
+                sql += "a" + count + "." + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.mappedAliasPropertyName(propertyNameEntry.getKey() + postFix, columnNameAliasMapCopy));
             }
             if (propertyCount++ < propertyTypeMap.size()) {
                 sql += ", ";
@@ -583,60 +691,75 @@ public class SchemaTableTree {
         return sql;
     }
 
-    private static String constructSectionedJoin(SchemaTableTree fromSchemaTableTree, SchemaTableTree toSchemaTableTree, int count) {
+    private static String constructSectionedJoin(SqlgGraph sqlgGraph, SchemaTableTree fromSchemaTableTree, SchemaTableTree toSchemaTableTree, int count) {
         if (toSchemaTableTree.direction == Direction.BOTH) {
             throw new IllegalStateException("Direction may not be BOTH!");
         }
         String rawToLabel;
-        if (toSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            rawToLabel = toSchemaTableTree.getSchemaTable().getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        if (toSchemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX)) {
+            rawToLabel = toSchemaTableTree.getSchemaTable().getTable().substring(VERTEX_PREFIX.length());
         } else {
             rawToLabel = toSchemaTableTree.getSchemaTable().getTable();
         }
         String rawFromLabel;
-        if (fromSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            rawFromLabel = fromSchemaTableTree.getSchemaTable().getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        if (fromSchemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX)) {
+            rawFromLabel = fromSchemaTableTree.getSchemaTable().getTable().substring(VERTEX_PREFIX.length());
         } else {
             rawFromLabel = fromSchemaTableTree.getSchemaTable().getTable();
         }
 
         String result;
-        if (fromSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.EDGE_PREFIX)) {
+        if (fromSchemaTableTree.getSchemaTable().getTable().startsWith(EDGE_PREFIX)) {
             if (toSchemaTableTree.isEdgeVertexStep()) {
                 if (toSchemaTableTree.direction == Direction.OUT) {
-                    result = "a" + (count - 1) + ".\"" + fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
-                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + SchemaManager.OUT_VERTEX_COLUMN_END + "\"";
-                    result += " = a" + count + ".\"" + toSchemaTableTree.lastMappedAliasId() + "\"";
+                    result = "a" + (count - 1) + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
+                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + Topology.OUT_VERTEX_COLUMN_END);
+                    result += " = a" + count + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(toSchemaTableTree.lastMappedAliasId());
                 } else {
-                    result = "a" + (count - 1) + ".\"" + fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
-                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + SchemaManager.IN_VERTEX_COLUMN_END + "\"";
-                    result += " = a" + count + ".\"" + toSchemaTableTree.lastMappedAliasId() + "\"";
+                    result = "a" + (count - 1) + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
+                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + Topology.IN_VERTEX_COLUMN_END);
+                    result += " = a" + count + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(toSchemaTableTree.lastMappedAliasId());
                 }
             } else {
                 if (toSchemaTableTree.direction == Direction.OUT) {
-                    result = "a" + (count - 1) + ".\"" + fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
-                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + SchemaManager.IN_VERTEX_COLUMN_END + "\"";
-                    result += " = a" + count + ".\"" + toSchemaTableTree.lastMappedAliasId() + "\"";
+                    result = "a" + (count - 1) + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
+                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + Topology.IN_VERTEX_COLUMN_END);
+                    result += " = a" + count + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(toSchemaTableTree.lastMappedAliasId());
                 } else {
-                    result = "a" + (count - 1) + ".\"" + fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
-                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + SchemaManager.OUT_VERTEX_COLUMN_END + "\"";
-                    result += " = a" + count + ".\"" + toSchemaTableTree.lastMappedAliasId() + "\"";
+                    result = "a" + (count - 1) + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." +
+                            toSchemaTableTree.getSchemaTable().getSchema() + "." + rawToLabel + Topology.OUT_VERTEX_COLUMN_END);
+                    result += " = a" + count + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(toSchemaTableTree.lastMappedAliasId());
                 }
             }
         } else {
             if (toSchemaTableTree.direction == Direction.OUT) {
-                result = "a" + (count - 1) + ".\"" + fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." + SchemaManager.ID + "\"";
-                result += " = a" + count + ".\"" + toSchemaTableTree.mappedAliasVertexForeignKeyColumnEnd(fromSchemaTableTree, toSchemaTableTree.direction, rawFromLabel) + "\"";
+                result = "a" + (count - 1) + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." + Topology.ID);
+                result += " = a" + count + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(toSchemaTableTree.mappedAliasVertexForeignKeyColumnEnd(fromSchemaTableTree, toSchemaTableTree.direction, rawFromLabel));
             } else {
-                result = "a" + (count - 1) + ".\"" + fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." + SchemaManager.ID + "\"";
-                result += " = a" + count + ".\"" + toSchemaTableTree.mappedAliasVertexForeignKeyColumnEnd(fromSchemaTableTree, toSchemaTableTree.direction, rawFromLabel) + "\"";
+                result = "a" + (count - 1) + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTableTree.getSchemaTable().getSchema() + "." + fromSchemaTableTree.getSchemaTable().getTable() + "." + Topology.ID);
+                result += " = a" + count + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(toSchemaTableTree.mappedAliasVertexForeignKeyColumnEnd(fromSchemaTableTree, toSchemaTableTree.direction, rawFromLabel));
             }
         }
         return result;
     }
 
-    private static String constructSinglePathSql(SqlgGraph sqlgGraph, boolean partOfDuplicateQuery, LinkedList<SchemaTableTree> distinctQueryStack, SchemaTableTree lastOfPrevious, SchemaTableTree firstOfNextStack) {
-        return constructSinglePathSql(sqlgGraph, partOfDuplicateQuery, distinctQueryStack, lastOfPrevious, firstOfNextStack, Collections.emptySet());
+    private String constructSinglePathSql(
+            SqlgGraph sqlgGraph,
+            boolean partOfDuplicateQuery,
+            LinkedList<SchemaTableTree> distinctQueryStack,
+            SchemaTableTree lastOfPrevious,
+            SchemaTableTree firstOfNextStack) {
+        return constructSinglePathSql(sqlgGraph, partOfDuplicateQuery, distinctQueryStack, lastOfPrevious, firstOfNextStack, Collections.emptySet(), false);
+    }
+
+    private String constructSinglePathSql(
+            SqlgGraph sqlgGraph,
+            boolean partOfDuplicateQuery,
+            LinkedList<SchemaTableTree> distinctQueryStack,
+            SchemaTableTree lastOfPrevious,
+            SchemaTableTree firstOfNextStack,
+            boolean dropStep) {
+        return constructSinglePathSql(sqlgGraph, partOfDuplicateQuery, distinctQueryStack, lastOfPrevious, firstOfNextStack, Collections.emptySet(), dropStep);
     }
 
     /**
@@ -649,22 +772,70 @@ public class SchemaTableTree {
      * The previous select needs to join onto the subsequent select. For this the from needs to select the appropriate
      * field for the join.
      */
-    private static String constructSinglePathSql(
+    private String constructSinglePathSql(
             SqlgGraph sqlgGraph,
             boolean partOfDuplicateQuery,
             LinkedList<SchemaTableTree> distinctQueryStack,
             SchemaTableTree lastOfPrevious,
             SchemaTableTree firstOfNextStack,
-            Set<SchemaTableTree> leftJoinOn) {
+            Set<SchemaTableTree> leftJoinOn,
+            boolean dropStep) {
 
-        String singlePathSql = "\nSELECT\n\t";
+        return constructSelectSinglePathSql(
+                sqlgGraph,
+                partOfDuplicateQuery,
+                distinctQueryStack,
+                lastOfPrevious,
+                firstOfNextStack,
+                leftJoinOn,
+                dropStep);
+    }
+
+    private String constructSelectSinglePathSql(
+            SqlgGraph sqlgGraph,
+            boolean partOfDuplicateQuery,
+            LinkedList<SchemaTableTree> distinctQueryStack,
+            SchemaTableTree lastOfPrevious,
+            SchemaTableTree firstOfNextStack,
+            Set<SchemaTableTree> leftJoinOn,
+            boolean dropStep
+    ) {
+        StringBuilder singlePathSql = new StringBuilder("\nSELECT\n\t");
         SchemaTableTree firstSchemaTableTree = distinctQueryStack.getFirst();
         SchemaTable firstSchemaTable = firstSchemaTableTree.getSchemaTable();
-        singlePathSql += constructFromClause(sqlgGraph, distinctQueryStack, lastOfPrevious, firstOfNextStack);
-        singlePathSql += "\nFROM\n\t";
-        singlePathSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTableTree.getSchemaTable().getSchema());
-        singlePathSql += ".";
-        singlePathSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTableTree.getSchemaTable().getTable());
+
+        //The SqlgVertexStep's incoming/parent element index and ids
+        //dropStep must not have the index as it uses 'delete from where in (select...)' or 'WITH (SELECT) DELETE...'
+        //the first column in the select must be the ID.
+        //As its a DELETE there is no need for the 'index' to order on.
+        if (!dropStep && lastOfPrevious == null && distinctQueryStack.getFirst().stepType != STEP_TYPE.GRAPH_STEP) {
+            //if there is only 1 incoming start/traverser we use a where clause as its faster.
+            if (this.parentIdsAndIndexes.size() == 1) {
+                singlePathSql.append(this.parentIdsAndIndexes.get(0).getRight());
+                singlePathSql.append(" as ");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+            } else if (sqlgGraph.getSqlDialect().supportsValuesExpression()) {
+                //Hardcoding here for H2
+                if (sqlgGraph.getSqlDialect().supportsFullValueExpression()) {
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+                } else {
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("C2"));
+                }
+                singlePathSql.append(" as ");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+            } else {
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+                singlePathSql.append(" as ");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+            }
+            singlePathSql.append(",\n\t");
+        }
+
+        singlePathSql.append(constructFromClause(sqlgGraph, distinctQueryStack, lastOfPrevious, firstOfNextStack, dropStep));
+        singlePathSql.append("\nFROM\n\t");
+        singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTableTree.getSchemaTable().getSchema()));
+        singlePathSql.append(".");
+        singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTableTree.getSchemaTable().getTable()));
         SchemaTableTree previous = firstSchemaTableTree;
         boolean skipFirst = true;
         for (SchemaTableTree schemaTableTree : distinctQueryStack) {
@@ -672,16 +843,16 @@ public class SchemaTableTree {
                 skipFirst = false;
                 continue;
             }
-            singlePathSql += constructJoinBetweenSchemaTables(sqlgGraph, previous, schemaTableTree);
+            singlePathSql.append(constructJoinBetweenSchemaTables(sqlgGraph, previous, schemaTableTree));
             previous = schemaTableTree;
         }
 
         SchemaTableTree previousLeftJoinSchemaTableTree = null;
         for (SchemaTableTree schemaTableTree : leftJoinOn) {
             if (previousLeftJoinSchemaTableTree == null || !previousLeftJoinSchemaTableTree.getSchemaTable().equals(schemaTableTree.getSchemaTable())) {
-                singlePathSql += constructJoinBetweenSchemaTables(sqlgGraph, previous, schemaTableTree, true);
+                singlePathSql.append(constructJoinBetweenSchemaTables(sqlgGraph, previous, schemaTableTree, true));
             } else {
-                singlePathSql += appendToJoinBetweenSchemaTables(sqlgGraph, previous, schemaTableTree, true);
+                singlePathSql.append(appendToJoinBetweenSchemaTables(sqlgGraph, previous, schemaTableTree, true));
             }
             previousLeftJoinSchemaTableTree = schemaTableTree;
         }
@@ -691,54 +862,128 @@ public class SchemaTableTree {
         //These values are inserted/copy command into a temporary table before joining.
         for (SchemaTableTree schemaTableTree : distinctQueryStack) {
             if (sqlgGraph.getSqlDialect().supportsBulkWithinOut() && schemaTableTree.hasBulkWithinOrOut(sqlgGraph)) {
-                singlePathSql += schemaTableTree.bulkWithJoin(sqlgGraph);
+                singlePathSql.append(schemaTableTree.bulkWithJoin(sqlgGraph));
             }
         }
 
+        MutableBoolean mutableWhere = new MutableBoolean(false);
+        MutableBoolean mutableOrderBy = new MutableBoolean(false);
+
         //lastOfPrevious is null for the first call in the call stack it needs the id parameter in the where clause.
         if (lastOfPrevious == null && distinctQueryStack.getFirst().stepType != STEP_TYPE.GRAPH_STEP) {
-            singlePathSql += "\nWHERE\n\t";
-            singlePathSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getSchema());
-            singlePathSql += ".";
-            singlePathSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getTable());
-            singlePathSql += "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(SchemaManager.ID);
-            singlePathSql += " = ? ";
+            if (this.parentIdsAndIndexes.size() != 1 && sqlgGraph.getSqlDialect().supportsValuesExpression()) {
+                singlePathSql.append(" INNER JOIN\n\t(VALUES");
+                int count = 1;
+                for (Pair<Long, Long> parentIdAndIndex : this.parentIdsAndIndexes) {
+                    singlePathSql.append("(");
+                    singlePathSql.append(parentIdAndIndex.getLeft());
+                    singlePathSql.append(", ");
+                    singlePathSql.append(parentIdAndIndex.getRight());
+                    singlePathSql.append(")");
+                    if (count++ < this.parentIdsAndIndexes.size()) {
+                        singlePathSql.append(",");
+                    }
+                }
+
+                if (sqlgGraph.getSqlDialect().supportsFullValueExpression()) {
+                    singlePathSql.append(") AS tmp (");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("tmpId"));
+                    singlePathSql.append(", ");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+                    singlePathSql.append(") ON ");
+
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getSchema()));
+                    singlePathSql.append(".");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getTable()));
+                    singlePathSql.append(".");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(Topology.ID));
+                    singlePathSql.append(" = tmp.");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("tmpId"));
+                } else {
+                    //This really is only for H2
+                    singlePathSql.append(") ON ");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getSchema()));
+                    singlePathSql.append(".");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getTable()));
+                    singlePathSql.append(".");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(Topology.ID));
+                    singlePathSql.append(" = ");
+                    singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("C1"));
+                }
+            } else if (this.parentIdsAndIndexes.size() != 1 && !sqlgGraph.getSqlDialect().supportsValuesExpression()) {
+                //Mariadb lo and behold does not support VALUES
+                //Need to use a randomized name here else the temp table gets reused within the same transaction.
+                SecureRandom random = new SecureRandom();
+                byte bytes[] = new byte[6];
+                random.nextBytes(bytes);
+                String tmpTableIdentified = Base64.getEncoder().encodeToString(bytes);
+                sqlgGraph.tx().normalBatchModeOn();
+                for (Pair<Long, Long> parentIdsAndIndex : this.parentIdsAndIndexes) {
+                    sqlgGraph.addTemporaryVertex(T.label, tmpTableIdentified, "tmpId", parentIdsAndIndex.getLeft(), "index", parentIdsAndIndex.getRight());
+                }
+                sqlgGraph.tx().flush();
+
+                singlePathSql.append(" INNER JOIN\n\t");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(sqlgGraph.getSqlDialect().getPublicSchema()));
+                singlePathSql.append(".");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(VERTEX_PREFIX + tmpTableIdentified));
+                singlePathSql.append(" as tmp");
+                singlePathSql.append(" ON ");
+
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getSchema()));
+                singlePathSql.append(".");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getTable()));
+                singlePathSql.append(".");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(Topology.ID));
+                singlePathSql.append(" = tmp.");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("tmpId"));
+            } else {
+                singlePathSql.append("\nWHERE\n\t");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getSchema()));
+                singlePathSql.append(".");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(firstSchemaTable.getTable()));
+                singlePathSql.append(".");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(Topology.ID));
+                singlePathSql.append(" = ");
+                singlePathSql.append(this.parentIdsAndIndexes.get(0).getLeft());
+                mutableWhere.setTrue();
+            }
         }
-
-
-        //check if the 'where' has already been printed
-        boolean printedWhere = (lastOfPrevious == null) && (distinctQueryStack.getFirst().stepType != STEP_TYPE.GRAPH_STEP);
-        MutableBoolean mutableWhere = new MutableBoolean(printedWhere);
-        MutableBoolean mutableOrderBy = new MutableBoolean(false);
 
         //construct the where clause for the hasContainers
         for (SchemaTableTree schemaTableTree : distinctQueryStack) {
-            singlePathSql += schemaTableTree.toWhereClause(sqlgGraph, mutableWhere);
+            singlePathSql.append(schemaTableTree.toWhereClause(sqlgGraph, mutableWhere));
         }
         //add in the is null where clause for the optional left joins
         for (SchemaTableTree schemaTableTree : leftJoinOn) {
-            singlePathSql += schemaTableTree.toOptionalLeftJoinWhereClause(sqlgGraph, mutableWhere);
+            singlePathSql.append(schemaTableTree.toOptionalLeftJoinWhereClause(sqlgGraph, mutableWhere));
         }
 
         //if partOfDuplicateQuery then the order by clause is on the outer select
         if (!partOfDuplicateQuery) {
+
+            if (!dropStep && lastOfPrevious == null && distinctQueryStack.getFirst().stepType != STEP_TYPE.GRAPH_STEP) {
+                singlePathSql.append("\nORDER BY\n\t");
+                singlePathSql.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes("index"));
+                mutableOrderBy.setTrue();
+            }
+
             //construct the order by clause for the comparators
             for (SchemaTableTree schemaTableTree : distinctQueryStack) {
-                singlePathSql += schemaTableTree.toOrderByClause(sqlgGraph, mutableOrderBy, -1);
-                singlePathSql += schemaTableTree.toRangeClause(sqlgGraph);
+                singlePathSql.append(schemaTableTree.toOrderByClause(sqlgGraph, mutableOrderBy, -1));
+                singlePathSql.append(schemaTableTree.toRangeClause(sqlgGraph, mutableOrderBy));
             }
         }
 
-        return singlePathSql;
+        return singlePathSql.toString();
     }
 
 
     private boolean hasBulkWithinOrOut(SqlgGraph sqlgGraph) {
-        return this.hasContainers.stream().filter(h -> SqlgUtil.isBulkWithinAndOut(sqlgGraph, h)).findAny().isPresent();
+        return this.hasContainers.stream().anyMatch(h -> SqlgUtil.isBulkWithinAndOut(sqlgGraph, h));
     }
 
     private String bulkWithJoin(SqlgGraph sqlgGraph) {
-
         StringBuilder sb = new StringBuilder();
         List<HasContainer> bulkHasContainers = this.hasContainers.stream().filter(h -> SqlgUtil.isBulkWithinAndOut(sqlgGraph, h)).collect(Collectors.toList());
         for (HasContainer hasContainer : bulkHasContainers) {
@@ -759,50 +1004,37 @@ public class SchemaTableTree {
                 throw new UnsupportedOperationException("Only Contains.within and Contains.without is supported!");
             }
 
-            SecureRandom random = new SecureRandom();
-            byte bytes[] = new byte[6];
-            random.nextBytes(bytes);
-            String tmpTableIdentified = Base64.getEncoder().encodeToString(bytes);
-            tmpTableIdentified = SchemaManager.VERTEX_PREFIX + SchemaManager.BULK_TEMP_EDGE + tmpTableIdentified;
-            sqlgGraph.getTopology().createTempTable(tmpTableIdentified, columns);
-
-            Map<String, Object> withInOutMap = new HashMap<>();
             if (hasContainer.getBiPredicate() == Contains.within) {
-                withInOutMap.put(WITHIN, "unused");
+                sb.append(" INNER JOIN\n\t");
             } else {
-                withInOutMap.put(WITHOUT, "unused");
+                //left join and in the where clause add a IS NULL, to find the values not in the right hand table
+                sb.append(" LEFT JOIN\n\t");
             }
-            String copySql = ((SqlBulkDialect) sqlgGraph.getSqlDialect()).temporaryTableCopyCommandSqlVertex(sqlgGraph, SchemaTable.of("public", tmpTableIdentified.substring(SchemaManager.VERTEX_PREFIX.length())), withInOutMap.keySet());
-            Writer writer = ((SqlBulkDialect) sqlgGraph.getSqlDialect()).streamSql(this.sqlgGraph, copySql);
-
+            sb.append("(VALUES ");
+            boolean first = true;
             for (Object withInOutValue : withInOuts) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
                 if (withInOutValue instanceof RecordId) {
                     withInOutValue = ((RecordId) withInOutValue).getId();
                 }
-                withInOutMap = new HashMap<>();
-                if (hasContainer.getBiPredicate() == Contains.within) {
-                    withInOutMap.put(WITHIN, withInOutValue);
-                } else {
-                    withInOutMap.put(WITHOUT, withInOutValue);
-                }
-                ((SqlBulkDialect) sqlgGraph.getSqlDialect()).writeStreamingVertex(writer, withInOutMap);
+                sb.append("(");
+                PropertyType propertyType = PropertyType.from(withInOutValue);
+                sb.append(sqlgGraph.getSqlDialect().valueToValuesString(propertyType, withInOutValue));
+                sb.append(")");
             }
-            try {
-                writer.close();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            if (hasContainer.getBiPredicate() == Contains.within) {
-                sb.append("\nINNER JOIN ");
-            } else {
-                //left join and in the where clause add a IS NULL, to find the values not in the right hand table
-                sb.append("\nLEFT JOIN ");
-            }
-            sb.append(" \"");
-            sb.append(tmpTableIdentified);
-            sb.append("\" tmp");
+            sb.append(") as tmp");
             sb.append(this.rootSchemaTableTree().tmpTableAliasCounter);
-            sb.append(" on");
+            sb.append("(");
+            if (hasContainer.getBiPredicate() == Contains.within) {
+                sb.append(WITHIN);
+            } else {
+                sb.append(WITHOUT);
+            }
+            sb.append(") ");
+            sb.append(" on ");
             sb.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getSchema()));
             sb.append(".");
             sb.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getTable()));
@@ -834,32 +1066,54 @@ public class SchemaTableTree {
         } else {
             result.append(" AND\n\t(");
         }
-        String rawLabel = this.parent.getSchemaTable().getTable().substring(SchemaManager.VERTEX_PREFIX.length());
-        result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getSchema()));
-        result.append(".");
-        result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getTable()));
-        result.append(".");
-        result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(
-                this.parent.getSchemaTable().getSchema() + "." + rawLabel +
-                        (this.getDirection() == Direction.IN ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END)));
-
-        result.append(" IS NULL)");
+        if (this.drop) {
+            Preconditions.checkState(this.parent.getSchemaTable().isEdgeTable(), "Optional left join drop queries must be for an edge!");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getSchema()));
+            result.append(".");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getTable()));
+            result.append(".");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(Topology.ID));
+            result.append(" IS NULL) ");
+            result.append("AND\n\t(");
+            String rawLabel = this.getSchemaTable().getTable().substring(EDGE_PREFIX.length());
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.parent.getSchemaTable().getSchema()));
+            result.append(".");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.parent.getSchemaTable().getTable()));
+            result.append(".");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(
+                    this.getSchemaTable().getSchema() + "." + rawLabel +
+                            (this.getDirection() == Direction.OUT ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END)));
+            result.append(" IS NOT NULL)");
+        } else {
+            Preconditions.checkState(this.parent.getSchemaTable().isVertexTable(), "Optional left join non drop queries must be for an vertex!");
+            String rawLabel = this.parent.getSchemaTable().getTable().substring(VERTEX_PREFIX.length());
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getSchema()));
+            result.append(".");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getSchemaTable().getTable()));
+            result.append(".");
+            result.append(sqlgGraph.getSqlDialect().maybeWrapInQoutes(
+                    this.parent.getSchemaTable().getSchema() + "." + rawLabel +
+                            (this.getDirection() == Direction.IN ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END)));
+            result.append(" IS NULL)");
+        }
         return result.toString();
     }
 
     private String toWhereClause(SqlgGraph sqlgGraph, MutableBoolean printedWhere) {
         final StringBuilder result = new StringBuilder();
         if (sqlgGraph.getSqlDialect().supportsBulkWithinOut()) {
-            this.hasContainers.stream().filter(h -> !SqlgUtil.isBulkWithin(sqlgGraph, h)).forEach(h -> {
-                if (!printedWhere.booleanValue()) {
-                    printedWhere.setTrue();
-                    result.append("\nWHERE\n\t(");
-                } else {
-                    result.append(" AND (");
+            for (HasContainer hasContainer : this.hasContainers) {
+                if (!SqlgUtil.isBulkWithin(sqlgGraph, hasContainer)) {
+                    if (!printedWhere.booleanValue()) {
+                        printedWhere.setTrue();
+                        result.append("\nWHERE\n\t(");
+                    } else {
+                        result.append(" AND (");
+                    }
+                    WhereClause whereClause = WhereClause.from(hasContainer.getPredicate());
+                    result.append(" ").append(whereClause.toSql(sqlgGraph, this, hasContainer)).append(")");
                 }
-                WhereClause whereClause = WhereClause.from(h.getPredicate());
-                result.append(" " + whereClause.toSql(sqlgGraph, this, h) + ")");
-            });
+            }
         } else {
             for (HasContainer hasContainer : this.getHasContainers()) {
                 if (!printedWhere.booleanValue()) {
@@ -869,15 +1123,27 @@ public class SchemaTableTree {
                     result.append(" AND (");
                 }
                 WhereClause whereClause = WhereClause.from(hasContainer.getPredicate());
-                result.append(" " + whereClause.toSql(sqlgGraph, this, hasContainer) + ")");
+                result.append(" ").append(whereClause.toSql(sqlgGraph, this, hasContainer)).append(")");
+                if (sqlgGraph.getSqlDialect().isMariaDb()) {
+                    result.append(" COLLATE latin1_general_cs");
+                }
             }
+        }
+        for (AndOrHasContainer andOrHasContainer : this.andOrHasContainers) {
+            if (!printedWhere.booleanValue()) {
+                printedWhere.setTrue();
+                result.append("\nWHERE ");
+            } else {
+                result.append(" AND ");
+            }
+            andOrHasContainer.toSql(sqlgGraph, this, result);
         }
         return result.toString();
     }
 
     private String toOrderByClause(SqlgGraph sqlgGraph, MutableBoolean printedOrderBy, int counter) {
         String result = "";
-        for (org.javatuples.Pair<Traversal.Admin, Comparator> comparator : this.getComparators()) {
+        for (org.javatuples.Pair<Traversal.Admin<?, ?>, Comparator<?>> comparator : this.getDbComparators()) {
             if (!printedOrderBy.booleanValue()) {
                 printedOrderBy.setTrue();
                 result += "\nORDER BY\n\t";
@@ -885,7 +1151,7 @@ public class SchemaTableTree {
                 result += ",\n\t";
             }
             if (comparator.getValue1() instanceof ElementValueComparator) {
-                ElementValueComparator elementValueComparator = (ElementValueComparator) comparator.getValue1();
+                ElementValueComparator<?> elementValueComparator = (ElementValueComparator<?>) comparator.getValue1();
                 String prefix = this.getSchemaTable().getSchema();
                 prefix += SchemaTableTree.ALIAS_SEPARATOR;
                 prefix += this.getSchemaTable().getTable();
@@ -908,21 +1174,42 @@ public class SchemaTableTree {
                 }
 
                 //TODO redo this via SqlgOrderGlobalStep
-            } else if (comparator.getValue0() instanceof ElementValueTraversal<?> && comparator.getValue1() instanceof Order) {
-                ElementValueTraversal elementValueTraversal = (ElementValueTraversal) comparator.getValue0();
+            } else if ((comparator.getValue0() instanceof ElementValueTraversal<?> || comparator.getValue0() instanceof TokenTraversal<?, ?>)
+                    && comparator.getValue1() instanceof Order) {
+                Traversal.Admin<?, ?> t = (Traversal.Admin<?, ?>) comparator.getValue0();
                 String prefix = String.valueOf(this.stepDepth);
+                prefix += SchemaTableTree.ALIAS_SEPARATOR;
+                prefix += this.reducedLabels();
                 prefix += SchemaTableTree.ALIAS_SEPARATOR;
                 prefix += this.getSchemaTable().getSchema();
                 prefix += SchemaTableTree.ALIAS_SEPARATOR;
                 prefix += this.getSchemaTable().getTable();
                 prefix += SchemaTableTree.ALIAS_SEPARATOR;
-                prefix += elementValueTraversal.getPropertyKey();
+                String key;
+                if (t instanceof ElementValueTraversal) {
+                    ElementValueTraversal<?> elementValueTraversal = (ElementValueTraversal<?>) t;
+                    key = elementValueTraversal.getPropertyKey();
+                } else {
+                    TokenTraversal<?, ?> tokenTraversal = (TokenTraversal<?, ?>) t;
+                    // see calculateLabeledAliasId
+                    if (tokenTraversal.getToken().equals(T.id)) {
+                        key = Topology.ID;
+                    } else {
+                        key = tokenTraversal.getToken().getAccessor();
+                    }
+                }
+                prefix += key;
                 String alias;
+                String rawAlias = this.getColumnNameAliasMap().get(prefix);
+                if (rawAlias == null) {
+                    throw new IllegalArgumentException("order by field '" + prefix + "' not found!");
+                }
                 if (counter == -1) {
                     //counter is -1 for single queries, i.e. they are not prefixed with ax
-                    alias = sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getColumnNameAliasMap().get(prefix));
+                    alias = sqlgGraph.getSqlDialect().maybeWrapInQoutes(rawAlias);
+
                 } else {
-                    alias = "a" + counter + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getColumnNameAliasMap().get(prefix));
+                    alias = "a" + counter + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(rawAlias);
                 }
                 result += " " + alias;
                 if (comparator.getValue1() == Order.incr) {
@@ -938,12 +1225,17 @@ public class SchemaTableTree {
                 SelectOneStep selectOneStep = (SelectOneStep) comparator.getValue0().getSteps().get(0);
                 Preconditions.checkState(selectOneStep.getScopeKeys().size() == 1, "toOrderByClause expects the selectOneStep to have one scopeKey!");
                 Preconditions.checkState(selectOneStep.getLocalChildren().size() == 1, "toOrderByClause expects the selectOneStep to have one traversal!");
-                Preconditions.checkState(selectOneStep.getLocalChildren().get(0) instanceof ElementValueTraversal, "toOrderByClause expects the selectOneStep's traversal to be a ElementValueTraversal!");
+                Traversal.Admin<?, ?> t = (Traversal.Admin<?, ?>) selectOneStep.getLocalChildren().get(0);
+                Preconditions.checkState(
+                        t instanceof ElementValueTraversal ||
+                                t instanceof TokenTraversal,
+                        "toOrderByClause expects the selectOneStep's traversal to be a ElementValueTraversal or TokenTraversal!");
 
                 //need to find the schemaTable that the select is for.
                 //this schemaTable is for the leaf node as the order by only occurs last in gremlin (optimized gremlin that is)
-                SchemaTableTree selectSchemaTableTree = findSelectSchemaTable((String) selectOneStep.getScopeKeys().iterator().next());
-                ElementValueTraversal elementValueTraversal = (ElementValueTraversal) selectOneStep.getLocalChildren().get(0);
+                String select = (String) selectOneStep.getScopeKeys().iterator().next();
+                SchemaTableTree selectSchemaTableTree = findSelectSchemaTable(select);
+                Preconditions.checkState(selectSchemaTableTree != null, "SchemaTableTree not found for " + select);
 
                 String prefix;
                 if (selectSchemaTableTree.children.isEmpty()) {
@@ -960,13 +1252,28 @@ public class SchemaTableTree {
                 prefix += SchemaTableTree.ALIAS_SEPARATOR;
                 prefix += selectSchemaTableTree.getSchemaTable().getTable();
                 prefix += SchemaTableTree.ALIAS_SEPARATOR;
-                prefix += elementValueTraversal.getPropertyKey();
+                if (t instanceof ElementValueTraversal) {
+                    ElementValueTraversal<?> elementValueTraversal = (ElementValueTraversal<?>) t;
+                    prefix += elementValueTraversal.getPropertyKey();
+                } else {
+                    TokenTraversal<?, ?> tokenTraversal = (TokenTraversal<?, ?>) t;
+                    // see calculateLabeledAliasId
+                    if (tokenTraversal.getToken().equals(T.id)) {
+                        prefix += Topology.ID;
+                    } else {
+                        prefix += tokenTraversal.getToken().getAccessor();
+                    }
+                }
                 String alias;
+                String rawAlias = this.getColumnNameAliasMap().get(prefix);
+                if (rawAlias == null) {
+                    throw new IllegalArgumentException("order by field '" + prefix + "' not found!");
+                }
                 if (counter == -1) {
                     //counter is -1 for single queries, i.e. they are not prefixed with ax
-                    alias = sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getColumnNameAliasMap().get(prefix));
+                    alias = sqlgGraph.getSqlDialect().maybeWrapInQoutes(rawAlias);
                 } else {
-                    alias = "a" + selectSchemaTableTree.stepDepth + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.getColumnNameAliasMap().get(prefix));
+                    alias = "a" + selectSchemaTableTree.stepDepth + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(rawAlias);
                 }
                 result += " " + alias;
                 if (comparator.getValue1() == Order.incr) {
@@ -981,15 +1288,25 @@ public class SchemaTableTree {
         return result;
     }
 
-    private String toRangeClause(SqlgGraph sqlgGraph) {
-        if (range != null) {
-            return " " + sqlgGraph.getSqlDialect().getRangeClause(range);
+    private String toRangeClause(SqlgGraph sqlgGraph, MutableBoolean mutableOrderBy) {
+        if (this.sqlgRangeHolder != null && this.sqlgRangeHolder.isApplyOnDb()) {
+            if (this.sqlgRangeHolder.hasRange()) {
+                //This is MssqlServer, ugly but what to do???
+                String sql = "";
+                if (mutableOrderBy.isFalse() && sqlgGraph.getSqlDialect().isMssqlServer() && this.getDbComparators().isEmpty()) {
+                    sql = "\n\tORDER BY 1\n\t";
+                }
+                return sql + "\n" + sqlgGraph.getSqlDialect().getRangeClause(this.sqlgRangeHolder.getRange());
+            } else {
+                Preconditions.checkState(this.sqlgRangeHolder.hasSkip(), "If not a range query then it must be a skip.");
+                return sqlgGraph.getSqlDialect().getSkipClause(this.sqlgRangeHolder.getSkip());
+            }
         }
         return "";
     }
 
     private SchemaTableTree findSelectSchemaTable(String select) {
-        return this.walkUp((t) -> t.stream().filter(a -> a.endsWith(BaseSqlgStrategy.PATH_LABEL_SUFFIX + select)).findAny().isPresent());
+        return this.walkUp((t) -> t.stream().filter(a -> a.endsWith(BaseStrategy.PATH_LABEL_SUFFIX + select)).findAny().isPresent());
     }
 
     private SchemaTableTree walkUp(Predicate<Set<String>> predicate) {
@@ -1029,7 +1346,7 @@ public class SchemaTableTree {
      * @return true is there are duplicates else false
      */
 
-    private static boolean duplicatesInStack(LinkedList<SchemaTableTree> distinctQueryStack) {
+    public boolean duplicatesInStack(LinkedList<SchemaTableTree> distinctQueryStack) {
         Set<SchemaTable> alreadyVisited = new HashSet<>();
         for (SchemaTableTree schemaTableTree : distinctQueryStack) {
             if (!alreadyVisited.contains(schemaTableTree.getSchemaTable())) {
@@ -1050,12 +1367,14 @@ public class SchemaTableTree {
      *                                //     * @param lastSchemaTableTree
      * @param previousSchemaTableTree The previous schemaTableTree that will be joined to.
      * @param nextSchemaTableTree     represents the table to join to. it is null for the last table as there is nothing to join to.  @return
+     * @param dropStep                Indicates that the from clause is generated for a drop step. In this case we only generate the "ID"
      */
     private static String constructFromClause(
             SqlgGraph sqlgGraph,
             LinkedList<SchemaTableTree> distinctQueryStack,
             SchemaTableTree previousSchemaTableTree,
-            SchemaTableTree nextSchemaTableTree) {
+            SchemaTableTree nextSchemaTableTree,
+            boolean dropStep) {
 
         SchemaTableTree firstSchemaTableTree = distinctQueryStack.getFirst();
         SchemaTableTree lastSchemaTableTree = distinctQueryStack.getLast();
@@ -1069,74 +1388,74 @@ public class SchemaTableTree {
             throw new IllegalStateException("Direction should never be BOTH");
         }
         //The join is always between an edge and vertex or vertex and edge table.
-        if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)
-                && nextSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
+        if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(VERTEX_PREFIX)
+                && nextSchemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX)) {
             throw new IllegalStateException("Join can not be between 2 vertex tables!");
         }
-        if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(SchemaManager.EDGE_PREFIX)
-                && nextSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.EDGE_PREFIX)) {
+        if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(EDGE_PREFIX)
+                && nextSchemaTableTree.getSchemaTable().getTable().startsWith(EDGE_PREFIX)) {
             throw new IllegalStateException("Join can not be between 2 edge tables!");
         }
 
-        if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)
-                && previousSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
+        if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(VERTEX_PREFIX)
+                && previousSchemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX)) {
             throw new IllegalStateException("Join can not be between 2 vertex tables!");
         }
-        if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(SchemaManager.EDGE_PREFIX)
-                && previousSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.EDGE_PREFIX)) {
+        if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(EDGE_PREFIX)
+                && previousSchemaTableTree.getSchemaTable().getTable().startsWith(EDGE_PREFIX)) {
             throw new IllegalStateException("Join can not be between 2 edge tables!");
         }
 
-        ColumnList columnList = new ColumnList(sqlgGraph);
+        ColumnList columnList = new ColumnList(sqlgGraph, dropStep);
         boolean printedId = false;
 
         //join to the previous label/table
-        if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(SchemaManager.EDGE_PREFIX)) {
-            if (!previousSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-                throw new IllegalStateException("Expected table to start with " + SchemaManager.VERTEX_PREFIX);
+        if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(EDGE_PREFIX)) {
+            if (!previousSchemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX)) {
+                throw new IllegalStateException("Expected table to start with " + VERTEX_PREFIX);
             }
-            String previousRawLabel = previousSchemaTableTree.getSchemaTable().getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+            String previousRawLabel = previousSchemaTableTree.getSchemaTable().getTable().substring(VERTEX_PREFIX.length());
             if (firstSchemaTableTree.direction == Direction.OUT) {
                 columnList.add(firstSchemaTable,
                         previousSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                previousRawLabel + SchemaManager.OUT_VERTEX_COLUMN_END,
+                                previousRawLabel + Topology.OUT_VERTEX_COLUMN_END,
                         previousSchemaTableTree.stepDepth,
                         firstSchemaTableTree.calculatedAliasVertexForeignKeyColumnEnd(previousSchemaTableTree, firstSchemaTableTree.direction));
             } else {
                 columnList.add(firstSchemaTable,
                         previousSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                previousRawLabel + SchemaManager.IN_VERTEX_COLUMN_END,
+                                previousRawLabel + Topology.IN_VERTEX_COLUMN_END,
                         previousSchemaTableTree.stepDepth,
                         firstSchemaTableTree.calculatedAliasVertexForeignKeyColumnEnd(previousSchemaTableTree, firstSchemaTableTree.direction));
             }
-        } else if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            columnList.add(firstSchemaTable, SchemaManager.ID, firstSchemaTableTree.stepDepth, firstSchemaTableTree.calculatedAliasId());
+        } else if (previousSchemaTableTree != null && firstSchemaTable.getTable().startsWith(VERTEX_PREFIX)) {
+            columnList.add(firstSchemaTable, Topology.ID, firstSchemaTableTree.stepDepth, firstSchemaTableTree.calculatedAliasId());
             printedId = firstSchemaTable == lastSchemaTable;
         }
         //join to the next table/label
-        if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(SchemaManager.EDGE_PREFIX)) {
-            Preconditions.checkState(nextSchemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX), "Expected table to start with %s", SchemaManager.VERTEX_PREFIX);
+        if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(EDGE_PREFIX)) {
+            Preconditions.checkState(nextSchemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX), "Expected table to start with %s", VERTEX_PREFIX);
 
-            String nextRawLabel = nextSchemaTableTree.getSchemaTable().getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+            String nextRawLabel = nextSchemaTableTree.getSchemaTable().getTable().substring(VERTEX_PREFIX.length());
             if (nextSchemaTableTree.direction == Direction.OUT) {
                 if (nextSchemaTableTree.isEdgeVertexStep()) {
                     columnList.add(lastSchemaTable,
                             nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.OUT_VERTEX_COLUMN_END,
+                                    nextRawLabel + Topology.OUT_VERTEX_COLUMN_END,
                             nextSchemaTableTree.stepDepth,
                             lastSchemaTable.getSchema() + "." + lastSchemaTable.getTable() + "." +
                                     nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.OUT_VERTEX_COLUMN_END);
+                                    nextRawLabel + Topology.OUT_VERTEX_COLUMN_END);
 
                     constructAllLabeledFromClause(distinctQueryStack, columnList);
                 } else {
                     columnList.add(lastSchemaTable,
                             nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.IN_VERTEX_COLUMN_END,
+                                    nextRawLabel + Topology.IN_VERTEX_COLUMN_END,
                             nextSchemaTableTree.stepDepth,
                             lastSchemaTable.getSchema() + "." + lastSchemaTable.getTable() + "." +
                                     nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.IN_VERTEX_COLUMN_END);
+                                    nextRawLabel + Topology.IN_VERTEX_COLUMN_END);
 
                     constructAllLabeledFromClause(distinctQueryStack, columnList);
                     constructEmitEdgeIdFromClause(distinctQueryStack, columnList);
@@ -1145,32 +1464,32 @@ public class SchemaTableTree {
                 if (nextSchemaTableTree.isEdgeVertexStep()) {
                     columnList.add(lastSchemaTable,
                             nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.IN_VERTEX_COLUMN_END,
+                                    nextRawLabel + Topology.IN_VERTEX_COLUMN_END,
                             nextSchemaTableTree.stepDepth,
                             lastSchemaTable.getSchema() + "." + lastSchemaTable.getTable() + "." +
                                     nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.IN_VERTEX_COLUMN_END);
+                                    nextRawLabel + Topology.IN_VERTEX_COLUMN_END);
 
                     constructAllLabeledFromClause(distinctQueryStack, columnList);
                 } else {
                     columnList.add(lastSchemaTable,
                             nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.OUT_VERTEX_COLUMN_END,
+                                    nextRawLabel + Topology.OUT_VERTEX_COLUMN_END,
                             nextSchemaTableTree.stepDepth,
                             lastSchemaTable.getSchema() + "." + lastSchemaTable.getTable() + "." +
                                     nextSchemaTableTree.getSchemaTable().getSchema() + "." +
-                                    nextRawLabel + SchemaManager.OUT_VERTEX_COLUMN_END);
+                                    nextRawLabel + Topology.OUT_VERTEX_COLUMN_END);
 
                     constructAllLabeledFromClause(distinctQueryStack, columnList);
                     constructEmitEdgeIdFromClause(distinctQueryStack, columnList);
                 }
             }
-        } else if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
+        } else if (nextSchemaTableTree != null && lastSchemaTable.getTable().startsWith(VERTEX_PREFIX)) {
 
             columnList.add(lastSchemaTable,
-                    SchemaManager.ID,
+                    Topology.ID,
                     nextSchemaTableTree.stepDepth,
-                    lastSchemaTable.getSchema() + "." + lastSchemaTable.getTable() + "." + SchemaManager.ID);
+                    lastSchemaTable.getSchema() + "." + lastSchemaTable.getTable() + "." + Topology.ID);
 
             constructAllLabeledFromClause(distinctQueryStack, columnList);
 
@@ -1197,7 +1516,7 @@ public class SchemaTableTree {
 
 
     private String printLabeledOuterFromClause(String sql, int counter, Map<String, String> columnNameAliasMapCopy) {
-        sql += " a" + counter + ".\"" + this.labeledMappedAliasIdForOuterFromClause(columnNameAliasMapCopy) + "\"";
+        sql += " a" + counter + "." + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.labeledMappedAliasIdForOuterFromClause(columnNameAliasMapCopy));
         Map<String, PropertyType> propertyTypeMap = this.getFilteredAllTables().get(this.getSchemaTable().toString());
         if (!propertyTypeMap.isEmpty()) {
             sql += ", ";
@@ -1250,11 +1569,11 @@ public class SchemaTableTree {
 
     private static void printEdgeId(SchemaTableTree schemaTableTree, ColumnList cols) {
         Preconditions.checkArgument(schemaTableTree.getSchemaTable().isEdgeTable());
-        cols.add(schemaTableTree, SchemaManager.ID, schemaTableTree.calculatedAliasId());
+        cols.add(schemaTableTree, Topology.ID, schemaTableTree.calculatedAliasId());
     }
 
     private static void printIDFromClauseFor(SchemaTableTree lastSchemaTableTree, ColumnList cols) {
-        cols.add(lastSchemaTableTree, SchemaManager.ID, lastSchemaTableTree.calculatedAliasId());
+        cols.add(lastSchemaTableTree, Topology.ID, lastSchemaTableTree.calculatedAliasId());
     }
 
     private static void printFromClauseFor(SchemaTableTree lastSchemaTableTree, ColumnList cols) {
@@ -1272,11 +1591,15 @@ public class SchemaTableTree {
     private String printLabeledOuterFromClauseFor(String sql, int counter, Map<String, String> columnNameAliasMapCopy) {
         Map<String, PropertyType> propertyTypeMap = this.getFilteredAllTables().get(this.getSchemaTable().toString());
         int count = 1;
-        for (String propertyName : propertyTypeMap.keySet()) {
+        for (Map.Entry<String, PropertyType> property : propertyTypeMap.entrySet()) {
             sql += " a" + counter + ".";
-            sql += "\"";
-            sql += this.labeledMappedAliasPropertyNameForOuterFromClause(propertyName, columnNameAliasMapCopy);
-            sql += "\"";
+            String alias = this.labeledMappedAliasPropertyNameForOuterFromClause(property.getKey(), columnNameAliasMapCopy);
+            sql += this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(alias);
+            for (String postFix : property.getValue().getPostFixes()) {
+                sql += ", ";
+                alias = this.mappedAliasPropertyName(property.getKey() + postFix, columnNameAliasMapCopy);
+                sql += this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(alias);
+            }
             if (count++ < propertyTypeMap.size()) {
                 sql += ", ";
             }
@@ -1285,10 +1608,10 @@ public class SchemaTableTree {
     }
 
     private static void printLabeledIDFromClauseFor(SchemaTableTree lastSchemaTableTree, ColumnList cols) {
-        String alias = cols.getAlias(lastSchemaTableTree, SchemaManager.ID);
+        String alias = cols.getAlias(lastSchemaTableTree, Topology.ID);
         if (alias == null) {
             alias = lastSchemaTableTree.calculateLabeledAliasId();
-            cols.add(lastSchemaTableTree, SchemaManager.ID, alias);
+            cols.add(lastSchemaTableTree, Topology.ID, alias);
         } else {
             lastSchemaTableTree.calculateLabeledAliasId(alias);
         }
@@ -1323,16 +1646,15 @@ public class SchemaTableTree {
         //Do not print all the edge foreign key ids. Only the edge ids that this outer clause is for.
         Set<String> edgeForeignKeys = this.sqlgGraph.getTopology().getAllEdgeForeignKeys().get(this.getSchemaTable().toString())
                 .stream().filter(foreignKeyName ->
-                        foreignKeyName.equals(previousSchemaTableTree.getSchemaTable().withOutPrefix().toString() + SchemaManager.IN_VERTEX_COLUMN_END)
+                        foreignKeyName.equals(previousSchemaTableTree.getSchemaTable().withOutPrefix().toString() + Topology.IN_VERTEX_COLUMN_END)
                                 ||
-                                foreignKeyName.equals(previousSchemaTableTree.getSchemaTable().withOutPrefix() + SchemaManager.OUT_VERTEX_COLUMN_END))
+                                foreignKeyName.equals(previousSchemaTableTree.getSchemaTable().withOutPrefix() + Topology.OUT_VERTEX_COLUMN_END))
                 .collect(Collectors.toSet());
         for (String edgeForeignKey : edgeForeignKeys) {
             sql += ", ";
             sql += prepend;
-            sql += ".\"";
-            sql += this.mappedAliasPropertyName(edgeForeignKey, this.getColumnNameAliasMap());
-            sql += "\"";
+            sql += ".";
+            sql += this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.mappedAliasPropertyName(edgeForeignKey, this.getColumnNameAliasMap()));
         }
         return sql;
     }
@@ -1352,7 +1674,7 @@ public class SchemaTableTree {
     }
 
     private static Direction getDirectionForForeignKey(String edgeForeignKey) {
-        return edgeForeignKey.endsWith(SchemaManager.IN_VERTEX_COLUMN_END) ? Direction.IN : Direction.OUT;
+        return edgeForeignKey.endsWith(Topology.IN_VERTEX_COLUMN_END) ? Direction.IN : Direction.OUT;
     }
 
     private String printLabeledEdgeInOutVertexIdOuterFromClauseFor(String sql, int counter, Map<String, String> columnNameAliasMapCopy) {
@@ -1385,7 +1707,7 @@ public class SchemaTableTree {
     }
 
     private String calculatedAliasId() {
-        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         String alias = rootAliasAndIncrement();
         this.getColumnNameAliasMap().put(result, alias);
         this.getAliasColumnNameMap().put(alias, result);
@@ -1394,19 +1716,18 @@ public class SchemaTableTree {
 
     private String calculateLabeledAliasId() {
         String reducedLabels = reducedLabels();
-        String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         String alias = rootAliasAndIncrement();
         this.getColumnNameAliasMap().put(result, alias);
         this.getAliasColumnNameMap().put(alias, result);
         return alias;
     }
 
-    private String calculateLabeledAliasId(String alias) {
+    private void calculateLabeledAliasId(String alias) {
         String reducedLabels = reducedLabels();
-        String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         this.getColumnNameAliasMap().put(result, alias);
         this.getAliasColumnNameMap().put(alias, result);
-        return alias;
     }
 
     private String calculateLabeledAliasPropertyName(String propertyName) {
@@ -1418,12 +1739,11 @@ public class SchemaTableTree {
         return alias;
     }
 
-    private String calculateLabeledAliasPropertyName(String propertyName, String alias) {
+    private void calculateLabeledAliasPropertyName(String propertyName, String alias) {
         String reducedLabels = reducedLabels();
         String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + propertyName;
         this.getColumnNameAliasMap().put(result, alias);
         this.getAliasColumnNameMap().put(alias, result);
-        return alias;
     }
 
     private String calculateAliasPropertyName(String propertyName) {
@@ -1435,10 +1755,10 @@ public class SchemaTableTree {
     }
 
     private String calculatedAliasVertexForeignKeyColumnEnd(SchemaTableTree previousSchemaTableTree, Direction direction) {
-        String previousRawLabel = previousSchemaTableTree.getSchemaTable().getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        String previousRawLabel = previousSchemaTableTree.getSchemaTable().getTable().substring(VERTEX_PREFIX.length());
         String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + previousSchemaTableTree.getSchemaTable().getSchema() +
                 //This must be a dot as its the foreign key column, i.e. blah__I
-                "." + previousRawLabel + (direction == Direction.IN ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END);
+                "." + previousRawLabel + (direction == Direction.IN ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END);
         String alias = rootAliasAndIncrement();
         this.getColumnNameAliasMap().put(result, alias);
         this.getAliasColumnNameMap().put(alias, result);
@@ -1449,7 +1769,7 @@ public class SchemaTableTree {
         String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR +
                 previousSchemaTableTree.getSchemaTable().getSchema() +
                 //This must be a dot as its the foreign key column, i.e. blah__I
-                "." + rawFromLabel + (direction == Direction.IN ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END);
+                "." + rawFromLabel + (direction == Direction.IN ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END);
         return this.getColumnNameAliasMap().get(result);
     }
 
@@ -1461,17 +1781,17 @@ public class SchemaTableTree {
 
     private String labeledMappedAliasIdForOuterFromClause(Map<String, String> columnNameAliasMapCopy) {
         String reducedLabels = reducedLabels();
-        String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         return columnNameAliasMapCopy.get(result);
     }
 
     private Optional<String> mappedAliasIdForOuterFromClause(Map<String, String> columnNameAliasMap) {
-        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         return Optional.ofNullable(columnNameAliasMap.get(result));
     }
 
     private Optional<String> lastMappedAliasIdForOuterFrom(Map<String, String> columnNameAliasMapCopy) {
-        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         return Optional.ofNullable(columnNameAliasMapCopy.get(result));
     }
 
@@ -1481,14 +1801,14 @@ public class SchemaTableTree {
     }
 
     private String lastMappedAliasId() {
-        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+        String result = this.stepDepth + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         return this.getColumnNameAliasMap().get(result);
     }
 
     public String labeledAliasId() {
         if (this.labeledAliasId == null) {
             String reducedLabels = reducedLabels();
-            this.labeledAliasId = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + SchemaManager.ID;
+            this.labeledAliasId = this.stepDepth + ALIAS_SEPARATOR + reducedLabels + ALIAS_SEPARATOR + getSchemaTable().getSchema() + ALIAS_SEPARATOR + getSchemaTable().getTable() + ALIAS_SEPARATOR + Topology.ID;
         }
         return this.labeledAliasId;
     }
@@ -1544,14 +1864,14 @@ public class SchemaTableTree {
         );
 
         String rawLabel;
-        if (fromSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            rawLabel = fromSchemaTable.getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        if (fromSchemaTable.getTable().startsWith(VERTEX_PREFIX)) {
+            rawLabel = fromSchemaTable.getTable().substring(VERTEX_PREFIX.length());
         } else {
             rawLabel = fromSchemaTable.getTable();
         }
         String rawLabelToTravers;
-        if (labelToTravers.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            rawLabelToTravers = labelToTravers.getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        if (labelToTravers.getTable().startsWith(VERTEX_PREFIX)) {
+            rawLabelToTravers = labelToTravers.getTable().substring(VERTEX_PREFIX.length());
         } else {
             rawLabelToTravers = labelToTravers.getTable();
         }
@@ -1561,7 +1881,7 @@ public class SchemaTableTree {
         } else {
             joinSql = " INNER JOIN\n\t";
         }
-        if (fromSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
+        if (fromSchemaTable.getTable().startsWith(VERTEX_PREFIX)) {
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema());
             joinSql += ".";
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getTable());
@@ -1578,7 +1898,7 @@ public class SchemaTableTree {
             joinSql += ".";
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(
                     fromSchemaTable.getSchema() + "." + rawLabel +
-                            (labelToTraversTree.getDirection() == Direction.IN ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END)
+                            (labelToTraversTree.getDirection() == Direction.IN ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END)
             );
         } else {
             //From edge to vertex table the foreign key is opposite to the direction.
@@ -1595,10 +1915,10 @@ public class SchemaTableTree {
             joinSql += ".";
             if (labelToTraversTree.isEdgeVertexStep()) {
                 joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema() + "." +
-                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? SchemaManager.OUT_VERTEX_COLUMN_END : SchemaManager.IN_VERTEX_COLUMN_END));
+                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? Topology.OUT_VERTEX_COLUMN_END : Topology.IN_VERTEX_COLUMN_END));
             } else {
                 joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema() + "." +
-                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END));
+                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END));
             }
             joinSql += " = ";
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema());
@@ -1621,19 +1941,19 @@ public class SchemaTableTree {
         );
 
         String rawLabel;
-        if (fromSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            rawLabel = fromSchemaTable.getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        if (fromSchemaTable.getTable().startsWith(VERTEX_PREFIX)) {
+            rawLabel = fromSchemaTable.getTable().substring(VERTEX_PREFIX.length());
         } else {
             rawLabel = fromSchemaTable.getTable();
         }
         String rawLabelToTravers;
-        if (labelToTravers.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-            rawLabelToTravers = labelToTravers.getTable().substring(SchemaManager.VERTEX_PREFIX.length());
+        if (labelToTravers.getTable().startsWith(VERTEX_PREFIX)) {
+            rawLabelToTravers = labelToTravers.getTable().substring(VERTEX_PREFIX.length());
         } else {
             rawLabelToTravers = labelToTravers.getTable();
         }
         String joinSql = " OR ";
-        if (fromSchemaTable.getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
+        if (fromSchemaTable.getTable().startsWith(VERTEX_PREFIX)) {
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTable.getSchema());
             joinSql += ".";
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(fromSchemaTable.getTable());
@@ -1646,7 +1966,7 @@ public class SchemaTableTree {
             joinSql += ".";
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(
                     fromSchemaTable.getSchema() + "." + rawLabel +
-                            (labelToTraversTree.getDirection() == Direction.IN ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END)
+                            (labelToTraversTree.getDirection() == Direction.IN ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END)
             );
         } else {
             //From edge to vertex table the foreign key is opposite to the direction.
@@ -1658,10 +1978,10 @@ public class SchemaTableTree {
             joinSql += ".";
             if (labelToTraversTree.isEdgeVertexStep()) {
                 joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema() + "." +
-                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? SchemaManager.OUT_VERTEX_COLUMN_END : SchemaManager.IN_VERTEX_COLUMN_END));
+                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? Topology.OUT_VERTEX_COLUMN_END : Topology.IN_VERTEX_COLUMN_END));
             } else {
                 joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema() + "." +
-                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? SchemaManager.IN_VERTEX_COLUMN_END : SchemaManager.OUT_VERTEX_COLUMN_END));
+                        rawLabelToTravers + (labelToTraversTree.getDirection() == Direction.OUT ? Topology.IN_VERTEX_COLUMN_END : Topology.OUT_VERTEX_COLUMN_END));
             }
             joinSql += " = ";
             joinSql += sqlgGraph.getSqlDialect().maybeWrapInQoutes(labelToTravers.getSchema());
@@ -1735,22 +2055,42 @@ public class SchemaTableTree {
     private void removeObsoleteHasContainers(final SchemaTableTree schemaTableTree) {
         Set<HasContainer> toRemove = new HashSet<>();
         for (HasContainer hasContainer : schemaTableTree.hasContainers) {
-            if (hasContainer.getKey().equals(label.getAccessor()) && hasContainer.getBiPredicate().equals(Compare.eq)) {
-                SchemaTable hasContainerLabelSchemaTable;
-                // we may have been given a type in a schema
-                SchemaTable predicateSchemaTable = SchemaTable.from(sqlgGraph, hasContainer.getValue().toString());
-                //Check if we are on a vertex or edge
-                if (schemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-                    hasContainerLabelSchemaTable = SchemaTable.of(predicateSchemaTable.getSchema(), SchemaManager.VERTEX_PREFIX + predicateSchemaTable.getTable());
-                } else {
-                    hasContainerLabelSchemaTable = SchemaTable.of(predicateSchemaTable.getSchema(), SchemaManager.EDGE_PREFIX + predicateSchemaTable.getTable());
-                }
-                if (hasContainerLabelSchemaTable.toString().equals(schemaTableTree.getSchemaTable().toString())) {
+            if (hasContainer.getKey().equals(label.getAccessor())) {
+                toRemove.add(hasContainer);
+            }
+
+            if (Existence.NULL.equals(hasContainer.getBiPredicate())) {
+                // we checked that a non existing property was null, that's fine
+                if (!this.getFilteredAllTables().get(schemaTableTree.getSchemaTable().toString()).containsKey(hasContainer.getKey())) {
                     toRemove.add(hasContainer);
                 }
             }
         }
         schemaTableTree.hasContainers.removeAll(toRemove);
+    }
+
+    private SchemaTable getHasContainerSchemaTable(SchemaTableTree schemaTableTree, SchemaTable predicateSchemaTable) {
+        SchemaTable hasContainerLabelSchemaTable;
+        //Check if we are on a vertex or edge
+        if (schemaTableTree.getSchemaTable().getTable().startsWith(VERTEX_PREFIX)) {
+            hasContainerLabelSchemaTable = SchemaTable.of(predicateSchemaTable.getSchema(), VERTEX_PREFIX + predicateSchemaTable.getTable());
+        } else {
+            hasContainerLabelSchemaTable = SchemaTable.of(predicateSchemaTable.getSchema(), EDGE_PREFIX + predicateSchemaTable.getTable());
+        }
+        return hasContainerLabelSchemaTable;
+    }
+
+    private SchemaTable getIDContainerSchemaTable(SchemaTableTree schemaTableTree, Object value) {
+        RecordId id;
+        if (value instanceof Long) {
+            return schemaTableTree.getSchemaTable();
+        } else if (!(value instanceof RecordId)) {
+            id = RecordId.from(String.valueOf(value));
+        } else {
+            id = (RecordId) value;
+        }
+        return getHasContainerSchemaTable(schemaTableTree, id.getSchemaTable());
+
     }
 
     /**
@@ -1763,29 +2103,66 @@ public class SchemaTableTree {
         for (HasContainer hasContainer : schemaTableTree.hasContainers) {
             if (!hasContainer.getKey().equals(TopologyStrategy.TOPOLOGY_SELECTION_WITHOUT) && !hasContainer.getKey().equals(TopologyStrategy.TOPOLOGY_SELECTION_FROM)) {
                 if (hasContainer.getKey().equals(label.getAccessor())) {
-                    SchemaTable hasContainerLabelSchemaTable;
-                    // we may have been given a type in a schema
-                    SchemaTable predicateSchemaTable = SchemaTable.from(sqlgGraph, hasContainer.getValue().toString());
-                    //Check if we are on a vertex or edge
-                    if (schemaTableTree.getSchemaTable().getTable().startsWith(SchemaManager.VERTEX_PREFIX)) {
-                        hasContainerLabelSchemaTable = SchemaTable.of(predicateSchemaTable.getSchema(), SchemaManager.VERTEX_PREFIX + predicateSchemaTable.getTable());
-                    } else {
-                        hasContainerLabelSchemaTable = SchemaTable.of(predicateSchemaTable.getSchema(), SchemaManager.EDGE_PREFIX + predicateSchemaTable.getTable());
+                    Preconditions.checkState(false, "label hasContainers should have been removed by now.");
+//                    if (hasContainer.getValue() instanceof Collection) {
+//                        Collection<String> labels = (Collection<String>) hasContainer.getValue();
+//                        Set<SchemaTable> labelSchemaTables = labels.stream().map(l -> SchemaTable.from(this.sqlgGraph, l)).collect(Collectors.toSet());
+//                        BiPredicate<SchemaTable, Collection<SchemaTable>> biPredicate  = (BiPredicate<SchemaTable, Collection<SchemaTable>>) hasContainer.getBiPredicate();
+//                        boolean whatever = biPredicate.test(schemaTableTree.getSchemaTable().withOutPrefix(), labelSchemaTables);
+//                        if (!whatever) {
+//                            return true;
+//                        }
+//                    } else {
+//                        SchemaTable labelSchemaTable = SchemaTable.from(this.sqlgGraph, (String)hasContainer.getValue());
+//                        BiPredicate<SchemaTable, SchemaTable> biPredicate  = (BiPredicate<SchemaTable, SchemaTable>) hasContainer.getBiPredicate();
+//                        boolean whatever = biPredicate.test(schemaTableTree.getSchemaTable().withOutPrefix(), labelSchemaTable);
+//                        if (!whatever) {
+//                            return true;
+//                        }
+//                    }
+////                    // we may have been given a type in a schema
+////                    SchemaTable predicateSchemaTable = SchemaTable.from(this.sqlgGraph, hasContainer.getValue().toString());
+////                    SchemaTable hasContainerLabelSchemaTable = getHasContainerSchemaTable(schemaTableTree, predicateSchemaTable);
+////                    if (hasContainer.getBiPredicate().equals(Compare.eq) && !hasContainerLabelSchemaTable.toString().equals(schemaTableTree.getSchemaTable().toString())) {
+////                        return true;
+////                    }
+                } else if (hasContainer.getKey().equals(T.id.getAccessor())) {
+                    if (hasContainer.getBiPredicate().equals(Compare.eq)) {
+                        Object value = hasContainer.getValue();
+                        SchemaTable hasContainerLabelSchemaTable = getIDContainerSchemaTable(schemaTableTree, value);
+                        if (!hasContainerLabelSchemaTable.equals(schemaTableTree.getSchemaTable())) {
+                            return true;
+                        }
+                    } else if (hasContainer.getBiPredicate().equals(Contains.within)) {
+                        Collection<?> c = (Collection<?>) hasContainer.getPredicate().getValue();
+                        Iterator<?> it = c.iterator();
+                        Collection<Object> ok = new LinkedList<>();
+                        while (it.hasNext()) {
+                            Object value = it.next();
+                            SchemaTable hasContainerLabelSchemaTable = getIDContainerSchemaTable(schemaTableTree, value);
+                            if (hasContainerLabelSchemaTable.equals(schemaTableTree.getSchemaTable())) {
+                                ok.add(value);
+                            }
+                        }
+                        if (ok.isEmpty()) {
+                            return true;
+                        }
+                        ((P<Collection<Object>>) (hasContainer.getPredicate())).setValue(ok);
                     }
-                    if (hasContainer.getBiPredicate().equals(Compare.eq) && !hasContainerLabelSchemaTable.toString().equals(schemaTableTree.getSchemaTable().toString())) {
-                        return true;
+                } else {
+                    if (hasContainer.getBiPredicate() instanceof FullText && ((FullText) hasContainer.getBiPredicate()).getQuery() != null) {
+                        return false;
                     }
-                } else if (!hasContainer.getKey().equals(T.id.getAccessor())) {
                     //check if the hasContainer is for a property that exists, if not remove this node from the query tree
                     if (!this.getFilteredAllTables().get(schemaTableTree.getSchemaTable().toString()).containsKey(hasContainer.getKey())) {
-                        return true;
+                        if (!Existence.NULL.equals(hasContainer.getBiPredicate())) {
+                            return true;
+                        }
                     }
                     //Check if it is a Contains.within with a empty list of values
                     if (hasEmptyWithin(hasContainer)) {
                         return true;
                     }
-                } else if (hasEmptyWithin(hasContainer)) {
-                    return true;
                 }
             }
         }
@@ -1823,9 +2200,9 @@ public class SchemaTableTree {
                 .append(this.stepDepth).append(" ")
                 .append(this.hasContainers.toString()).append(" ")
                 .append("Comparators = ")
-                .append(this.comparators.toString()).append(" ")
+                .append(this.sqlgComparatorHolder.toString()).append(" ")
                 .append("Range = ")
-                .append(String.valueOf(range)).append(" ")
+                .append(String.valueOf(this.sqlgRangeHolder.getRange())).append(" ")
                 .append(this.direction != null ? this.direction.toString() : "").append(" ")
                 .append("isVertexStep = ").append(this.isEdgeVertexStep())
                 .append(" isUntilFirst = ").append(this.isUntilFirst())
@@ -1836,19 +2213,27 @@ public class SchemaTableTree {
     }
 
     private SchemaTableTree getParent() {
-        return parent;
+        return this.parent;
     }
 
     public Direction getDirection() {
-        return direction;
+        return this.direction;
     }
 
     public List<HasContainer> getHasContainers() {
-        return hasContainers;
+        return this.hasContainers;
     }
 
-    private List<org.javatuples.Pair<Traversal.Admin, Comparator>> getComparators() {
-        return this.comparators;
+    public List<AndOrHasContainer> getAndOrHasContainers() {
+        return andOrHasContainers;
+    }
+
+    public SqlgComparatorHolder getSqlgComparatorHolder() {
+        return this.sqlgComparatorHolder;
+    }
+
+    public List<org.javatuples.Pair<Traversal.Admin<?, ?>, Comparator<?>>> getDbComparators() {
+        return this.dbComparators;
     }
 
     public int getStepDepth() {
@@ -1857,55 +2242,6 @@ public class SchemaTableTree {
 
     public int getReplacedStepDepth() {
         return replacedStepDepth;
-    }
-
-    public int depth() {
-        AtomicInteger depth = new AtomicInteger();
-        walk(v -> {
-            if (v.stepDepth > depth.get()) {
-                depth.set(v.stepDepth);
-            }
-            return null;
-        });
-        return depth.get();
-    }
-
-    public int numberOfNodes() {
-        AtomicInteger count = new AtomicInteger();
-        walk(v -> {
-            count.getAndIncrement();
-            return null;
-        });
-        return count.get();
-    }
-
-    private void walk(Visitor v) {
-        v.visit(this);
-        this.children.forEach(c -> c.walk(v));
-    }
-
-    public SchemaTableTree schemaTableAtDepth(final int depth, final int number) {
-        AtomicInteger count = new AtomicInteger();
-        //Need to reset the count when the depth changes.
-        AtomicInteger depthCache = new AtomicInteger(depth);
-        return walkWithExit(
-                v -> {
-                    if (depthCache.get() != v.stepDepth) {
-                        depthCache.set(v.stepDepth);
-                        count.set(0);
-                    }
-                    return (count.getAndIncrement() == number && v.stepDepth == depth);
-                }
-        );
-    }
-
-    private SchemaTableTree walkWithExit(Visitor<Boolean> v) {
-        if (!v.visit(this)) {
-            if (!this.children.isEmpty()) {
-                return this.children.get(0).walkWithExit(v);
-            }
-        }
-        return this;
     }
 
     @Override
@@ -1958,12 +2294,12 @@ public class SchemaTableTree {
         if (this.realLabels == null) {
             this.realLabels = new HashSet<>();
             for (String label : this.labels) {
-                if (label.contains(BaseSqlgStrategy.PATH_LABEL_SUFFIX)) {
-                    this.realLabels.add(label.substring(label.indexOf(BaseSqlgStrategy.PATH_LABEL_SUFFIX) + BaseSqlgStrategy.PATH_LABEL_SUFFIX.length()));
-                } else if (label.contains(BaseSqlgStrategy.EMIT_LABEL_SUFFIX)) {
-                    this.realLabels.add(label.substring(label.indexOf(BaseSqlgStrategy.EMIT_LABEL_SUFFIX) + BaseSqlgStrategy.EMIT_LABEL_SUFFIX.length()));
+                if (label.contains(BaseStrategy.PATH_LABEL_SUFFIX)) {
+                    this.realLabels.add(label.substring(label.indexOf(BaseStrategy.PATH_LABEL_SUFFIX) + BaseStrategy.PATH_LABEL_SUFFIX.length()));
+                } else if (label.contains(BaseStrategy.EMIT_LABEL_SUFFIX)) {
+                    this.realLabels.add(label.substring(label.indexOf(BaseStrategy.EMIT_LABEL_SUFFIX) + BaseStrategy.EMIT_LABEL_SUFFIX.length()));
                 } else {
-                    throw new IllegalStateException("label must contain " + BaseSqlgStrategy.PATH_LABEL_SUFFIX + " or " + BaseSqlgStrategy.EMIT_LABEL_SUFFIX);
+                    throw new IllegalStateException("label must contain " + BaseStrategy.PATH_LABEL_SUFFIX + " or " + BaseStrategy.EMIT_LABEL_SUFFIX);
                 }
             }
         }
@@ -1996,37 +2332,23 @@ public class SchemaTableTree {
 
     public void loadProperty(ResultSet resultSet, SqlgElement sqlgElement) throws SQLException {
         for (int ix = 1; ix <= resultSet.getMetaData().getColumnCount(); ix++) {
-
-            //for (Map.Entry<String, Pair<String, PropertyType>> entry : getColumnNamePropertyName().entrySet()) {
             String columnName = resultSet.getMetaData().getColumnLabel(ix);//entry.getKey();
             Pair<String, PropertyType> p = getColumnNamePropertyName().get(columnName);
             if (p != null) {
                 String propertyName = p.getKey();
                 PropertyType propertyType = p.getValue();
-
-                //make sure that if we request an array-backed type, we do it using
-                //the getArray() call. Don't bother for byte arrays, because they are
-                //handled differently by all supported DBs, so getObject() on them
-                //works.
-//                Object o = (propertyType != null && propertyType.isArray()
-//                        && propertyType != PropertyType.byte_ARRAY
-//                        && propertyType != PropertyType.BYTE_ARRAY)
-//                        ? resultSet.getArray(ix)
-//                        : resultSet.getObject(ix);
-//                if (!Objects.isNull(o)) {
-                if (propertyName.endsWith(SchemaManager.IN_VERTEX_COLUMN_END)) {
+                if (propertyName.endsWith(Topology.IN_VERTEX_COLUMN_END)) {
                     ((SqlgEdge) sqlgElement).loadInVertex(resultSet, propertyName, ix);
-                } else if (propertyName.endsWith(SchemaManager.OUT_VERTEX_COLUMN_END)) {
+                } else if (propertyName.endsWith(Topology.OUT_VERTEX_COLUMN_END)) {
                     ((SqlgEdge) sqlgElement).loadOutVertex(resultSet, propertyName, ix);
                 } else {
                     sqlgElement.loadProperty(resultSet, propertyName, ix, getColumnNameAliasMap(), this.stepDepth, propertyType);
                 }
-//                }
             }
         }
     }
 
-    public void clearColumnNamePropertNameMap() {
+    public void clearColumnNamePropertyNameMap() {
         if (this.columnNamePropertyName != null) {
             this.columnNamePropertyName.clear();
             this.columnNamePropertyName = null;
@@ -2035,7 +2357,7 @@ public class SchemaTableTree {
 
     public String idProperty() {
         if (this.idProperty == null) {
-            this.idProperty = this.stepDepth + ALIAS_SEPARATOR + schemaTable.getSchema() + SchemaTableTree.ALIAS_SEPARATOR + schemaTable.getTable() + SchemaTableTree.ALIAS_SEPARATOR + SchemaManager.ID;
+            this.idProperty = this.stepDepth + ALIAS_SEPARATOR + schemaTable.getSchema() + SchemaTableTree.ALIAS_SEPARATOR + schemaTable.getTable() + SchemaTableTree.ALIAS_SEPARATOR + Topology.ID;
         }
         return this.idProperty;
     }
@@ -2054,6 +2376,29 @@ public class SchemaTableTree {
 
     public void setFakeEmit(boolean fakeEmit) {
         this.fakeEmit = fakeEmit;
+    }
+
+    public void setParentIdsAndIndexes(List<Pair<Long, Long>> parentIdsAndIndexes) {
+        this.parentIdsAndIndexes = parentIdsAndIndexes;
+    }
+
+    public STEP_TYPE getStepType() {
+        return stepType;
+    }
+
+    public List<Pair<Long, Long>> getParentIdsAndIndexes() {
+        return parentIdsAndIndexes;
+    }
+
+    public void removeDbComparators() {
+        this.dbComparators = new ArrayList<>();
+        for (SchemaTableTree child : this.children) {
+            child.removeDbComparators();
+        }
+    }
+
+    public boolean isDrop() {
+        return drop;
     }
 
 }

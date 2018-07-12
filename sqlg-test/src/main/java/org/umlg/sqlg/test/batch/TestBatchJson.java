@@ -26,7 +26,7 @@ public class TestBatchJson extends BaseTest {
     @BeforeClass
     public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
         BaseTest.beforeClass();
-        if (configuration.getString("jdbc.url").contains("postgresql")) {
+        if (isPostgres()) {
             configuration.addProperty("distributed", true);
         }
     }
@@ -72,6 +72,7 @@ public class TestBatchJson extends BaseTest {
         }
     }
 
+
     private void batchJson_assert(SqlgGraph sqlgGraph, ObjectNode json) {
         List<Vertex> vertices = sqlgGraph.traversal().V().hasLabel("Person").toList();
         assertEquals(10, vertices.size());
@@ -95,7 +96,7 @@ public class TestBatchJson extends BaseTest {
         assertEquals(json, value);
         this.sqlgGraph.tx().normalBatchModeOn();
         json = new ObjectNode(objectMapper.getNodeFactory());
-        json.put("username", "pete");
+        json.put("username", "o'connor");
         for (Vertex vertex : vertices) {
             vertex.property("doc", json);
         }
@@ -161,6 +162,7 @@ public class TestBatchJson extends BaseTest {
 
     @Test
     public void testBatchJsonContainingEmbeddedJson() throws IOException, InterruptedException {
+        Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsStreamingBatchMode());
         String jsonQuery = "{" +
                 "\"chartEnabled\":true," +
                 "\"geom\":\"{\\\"type\\\":\\\"LineString\\\"," +

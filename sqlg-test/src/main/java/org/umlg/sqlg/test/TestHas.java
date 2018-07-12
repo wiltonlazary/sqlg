@@ -1,19 +1,16 @@
 package org.umlg.sqlg.test;
 
-import org.apache.tinkerpop.gremlin.AbstractGremlinTest;
 import org.apache.tinkerpop.gremlin.process.traversal.P;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
-import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
-import org.apache.tinkerpop.gremlin.structure.io.GraphReader;
-import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoIo;
-import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoReader;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -21,6 +18,36 @@ import java.util.List;
  * Time: 6:36 PM
  */
 public class TestHas extends BaseTest {
+
+    @Test
+    public void g_V_hasXblahX() {
+        loadModern();
+        final Traversal<Vertex, Vertex> traversal =  this.sqlgGraph.traversal().V().has("blah");
+        printTraversalForm(traversal);
+        Assert.assertFalse(traversal.hasNext());
+    }
+
+    @Test
+    public void testHasProperty() {
+        Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "name", "a");
+        Vertex a2 = this.sqlgGraph.addVertex(T.label, "A", "name", "a");
+        this.sqlgGraph.addVertex(T.label, "A");
+        this.sqlgGraph.addVertex(T.label, "A");
+        this.sqlgGraph.tx().commit();
+        Assert.assertEquals(2, this.sqlgGraph.traversal().V().has("name").count().next(), 0);
+        Assert.assertTrue(this.sqlgGraph.traversal().V().has("name").toList().containsAll(Arrays.asList(a1, a2)));
+    }
+
+    @Test
+    public void testHasNotProperty() {
+        Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "name", "a");
+        Vertex a2 = this.sqlgGraph.addVertex(T.label, "A", "name", "a");
+        Vertex a3 = this.sqlgGraph.addVertex(T.label, "A");
+        Vertex a4 = this.sqlgGraph.addVertex(T.label, "A");
+        this.sqlgGraph.tx().commit();
+        Assert.assertEquals(2, this.sqlgGraph.traversal().V().hasNot("name").count().next(), 0);
+        Assert.assertTrue(this.sqlgGraph.traversal().V().hasNot("name").toList().containsAll(Arrays.asList(a3, a4)));
+    }
 
     @Test
     public void g_V_in_hasIdXneqX1XX() {
@@ -47,25 +74,19 @@ public class TestHas extends BaseTest {
 
     @Test
     public void g_V_hasId() throws IOException {
-        Graph graph = this.sqlgGraph;
-        final GraphReader reader = GryoReader.build()
-                .mapper(graph.io(GryoIo.build()).mapper().create())
-                .create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/tinkerpop-modern.kryo")) {
-            reader.readGraph(stream, graph);
-        }
-        assertModernGraph(graph, true, false);
-        GraphTraversalSource g = graph.traversal();
+        loadModern();
+        assertModernGraph(this.sqlgGraph, true, false);
+        GraphTraversalSource g = this.sqlgGraph.traversal();
 
         Object id = convertToVertexId("marko");
 
         List<Vertex> traversala2 =  g.V().has(T.id, id).toList();
         Assert.assertEquals(1, traversala2.size());
-        Assert.assertEquals(convertToVertex(graph, "marko"), traversala2.get(0));
+        Assert.assertEquals(convertToVertex(this.sqlgGraph, "marko"), traversala2.get(0));
 
         traversala2 =  g.V().hasId(id).toList();
         Assert.assertEquals(1, traversala2.size());
-        Assert.assertEquals(convertToVertex(graph, "marko"), traversala2.get(0));
+        Assert.assertEquals(convertToVertex(this.sqlgGraph, "marko"), traversala2.get(0));
     }
 
     @Test
@@ -79,6 +100,47 @@ public class TestHas extends BaseTest {
         Assert.assertEquals(1, vertices.size());
         Assert.assertEquals(a1, vertices.get(0));
     }
+
+	@Test
+	public void testHasIDDifferentLabels() {
+		Vertex a1 = this.sqlgGraph.addVertex(T.label, "A");
+		Vertex b1 = this.sqlgGraph.addVertex(T.label, "B");
+		Vertex b2 = this.sqlgGraph.addVertex(T.label, "B");
+		Vertex c1 = this.sqlgGraph.addVertex(T.label, "C");
+
+		Edge e1 = a1.addEdge("ab", b1);
+
+		List<Object> edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(b1.id()).select("e")
+				.toList();
+		Assert.assertEquals(1, edges.size());
+		Assert.assertEquals(e1, edges.get(0));
+
+		edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(a1.id(),b1.id()).select("e")
+				.toList();
+		Assert.assertEquals(1, edges.size());
+		Assert.assertEquals(e1, edges.get(0));
+
+		edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(P.within(b1.id())).select("e")
+				.toList();
+		Assert.assertEquals(1, edges.size());
+		Assert.assertEquals(e1, edges.get(0));
+
+		edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(c1.id()).select("e")
+				.toList();
+		Assert.assertEquals(0, edges.size());
+
+		edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(P.within(c1.id())).select("e")
+				.toList();
+		Assert.assertEquals(0, edges.size());
+
+		edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(P.within(a1.id(),c1.id())).select("e")
+				.toList();
+		Assert.assertEquals(0, edges.size());
+
+		edges = this.sqlgGraph.traversal().V(a1.id()).outE("ab").as("e").inV().hasId(P.within(a1.id(),b2.id())).select("e")
+				.toList();
+		Assert.assertEquals(0, edges.size());
+	}
 
     @Test
     public void testHas() {

@@ -11,9 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.umlg.sqlg.sql.dialect.SqlSchemaChangeDialect;
 import org.umlg.sqlg.structure.PropertyType;
-import org.umlg.sqlg.structure.Schema;
+import org.umlg.sqlg.structure.topology.Schema;
 import org.umlg.sqlg.structure.SqlgGraph;
-import org.umlg.sqlg.structure.VertexLabel;
+import org.umlg.sqlg.structure.topology.VertexLabel;
 import org.umlg.sqlg.test.BaseTest;
 
 import java.beans.PropertyVetoException;
@@ -39,7 +39,7 @@ public class TestMultipleThreadMultipleJvm extends BaseTest {
         URL sqlProperties = Thread.currentThread().getContextClassLoader().getResource("sqlg.properties");
         try {
             configuration = new PropertiesConfiguration(sqlProperties);
-            Assume.assumeTrue(configuration.getString("jdbc.url").contains("postgresql"));
+            Assume.assumeTrue(isPostgres());
             configuration.addProperty("distributed", true);
 //            configuration.addProperty("maxPoolSize", 3);
             if (!configuration.containsKey("jdbc.url"))

@@ -5,7 +5,6 @@ import org.apache.commons.lang3.tuple.Triple;
 import org.umlg.sqlg.structure.*;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.Writer;
 import java.util.*;
 
@@ -17,11 +16,21 @@ import static javax.swing.JOptionPane.ERROR_MESSAGE;
  */
 public interface SqlBulkDialect extends SqlDialect {
 
-    default Map<SchemaTable, Pair<Long, Long>> flushVertexCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgVertex, Map<String, Object>>>> vertexCache) {
+    void flushVertexCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgVertex, Map<String, Object>>>> vertexCache);
+
+    void flushEdgeCache(SqlgGraph sqlgGraph, Map<MetaEdge, Pair<SortedSet<String>, Map<SqlgEdge, Triple<SqlgVertex, SqlgVertex, Map<String, Object>>>>> edgeCache);
+
+    void flushVertexPropertyCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgVertex, Map<String, Object>>>> vertexPropertyCache);
+
+    void flushEdgePropertyCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgEdge, Map<String, Object>>>> edgePropertyCache);
+
+    void flushRemovedVertices(SqlgGraph sqlgGraph, Map<SchemaTable, List<SqlgVertex>> removeVertexCache);
+
+    default void flushRemovedEdges(SqlgGraph sqlgGraph, Map<SchemaTable, List<SqlgEdge>> removeEdgeCache) {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
-    default void flushEdgeCache(SqlgGraph sqlgGraph, Map<MetaEdge, Pair<SortedSet<String>, Map<SqlgEdge, Triple<SqlgVertex, SqlgVertex, Map<String, Object>>>>> edgeCache) {
+    default String getBatchNull() {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
@@ -33,19 +42,7 @@ public interface SqlBulkDialect extends SqlDialect {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
-    default String getBatchNull() {
-        throw SqlgExceptions.batchModeNotSupported(dialectName());
-    }
-
-    default void flushVertexPropertyCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgVertex, Map<String, Object>>>> vertexPropertyCache) {
-        throw SqlgExceptions.batchModeNotSupported(dialectName());
-    }
-
     default void flushVertexGlobalUniqueIndexPropertyCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgVertex, Map<String, Object>>>> vertexPropertyCache) {
-        throw SqlgExceptions.batchModeNotSupported(dialectName());
-    }
-
-    default void flushEdgePropertyCache(SqlgGraph sqlgGraph, Map<SchemaTable, Pair<SortedSet<String>, Map<SqlgEdge, Map<String, Object>>>> edgePropertyCache) {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
@@ -53,19 +50,11 @@ public interface SqlBulkDialect extends SqlDialect {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
-    default void flushRemovedVertices(SqlgGraph sqlgGraph, Map<SchemaTable, List<SqlgVertex>> removeVertexCache) {
-        throw SqlgExceptions.batchModeNotSupported(dialectName());
-    }
-
-    default void flushRemovedEdges(SqlgGraph sqlgGraph, Map<SchemaTable, List<SqlgEdge>> removeEdgeCache) {
-        throw SqlgExceptions.batchModeNotSupported(dialectName());
-    }
-
     default void flushRemovedGlobalUniqueIndexVertices(SqlgGraph sqlgGraph, Map<SchemaTable, List<SqlgVertex>> removeVertexCache) {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
-    default <L, R> void bulkAddEdges(SqlgGraph sqlgGraph, SchemaTable in, SchemaTable out, String edgeLabel, Pair<String, String> idFields, Collection<Pair<L, R>> uids) {
+    default <L, R> void bulkAddEdges(SqlgGraph sqlgGraph, SchemaTable in, SchemaTable out, String edgeLabel, Pair<String, String> idFields, Collection<Pair<L, R>> uids, Map<String, PropertyType> edgeColumns, Map<String, Object> edgePropertyMap) {
         throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
@@ -95,10 +84,6 @@ public interface SqlBulkDialect extends SqlDialect {
 
     default String temporaryTableCopyCommandSqlVertex(SqlgGraph sqlgGraph, SchemaTable schemaTable, Set<String> keys) {
         throw new UnsupportedOperationException(ERROR_MESSAGE + dialectName());
-    }
-
-    default InputStream inputStreamSql(SqlgGraph sqlgGraph, String sql) {
-        throw SqlgExceptions.batchModeNotSupported(dialectName());
     }
 
     default Writer streamSql(SqlgGraph sqlgGraph, String sql) {

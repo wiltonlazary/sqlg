@@ -1,25 +1,26 @@
 package org.umlg.sqlg.structure;
 
 import com.google.common.base.Preconditions;
-import org.apache.commons.collections4.map.HashedMap;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.tinkerpop.gremlin.structure.*;
 import org.apache.tinkerpop.gremlin.structure.util.ElementHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.umlg.sqlg.sql.parse.ReplacedStep;
-import org.umlg.sqlg.sql.parse.SchemaTableTree;
-import org.umlg.sqlg.strategy.Emit;
+import org.umlg.sqlg.structure.topology.GlobalUniqueIndex;
+import org.umlg.sqlg.structure.topology.PropertyColumn;
+import org.umlg.sqlg.structure.topology.Schema;
+import org.umlg.sqlg.structure.topology.Topology;
 import org.umlg.sqlg.util.SqlgUtil;
 
 import java.sql.*;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Stream;
 
 import static org.umlg.sqlg.sql.parse.SchemaTableTree.ALIAS_SEPARATOR;
+import static org.umlg.sqlg.structure.topology.Topology.EDGE_PREFIX;
+import static org.umlg.sqlg.structure.topology.Topology.VERTEX_PREFIX;
 
 /**
  * Date: 2014/07/12
@@ -27,7 +28,7 @@ import static org.umlg.sqlg.sql.parse.SchemaTableTree.ALIAS_SEPARATOR;
  */
 public abstract class SqlgElement implements Element {
 
-    private Logger logger = LoggerFactory.getLogger(SqlgVertex.class.getName());
+    private static Logger logger = LoggerFactory.getLogger(SqlgVertex.class);
 
     protected String schema;
     protected String table;
@@ -37,28 +38,30 @@ public abstract class SqlgElement implements Element {
     protected Map<String, Object> properties = new ConcurrentHashMap<>();
     private SqlgElementElementPropertyRollback elementPropertyRollback;
     boolean removed = false;
+    //Used in the SqlgBranchStepBarrier to sort the results by the start elements.
+    private long internalStartTraverserIndex;
 
     public SqlgElement(SqlgGraph sqlgGraph, String schema, String table) {
         this.sqlgGraph = sqlgGraph;
         this.schema = schema;
         this.table = table;
         this.elementPropertyRollback = new SqlgElementElementPropertyRollback();
-//        if (!this.sqlgGraph.tx().isInStreamingBatchMode() && !this.sqlgGraph.tx().isInStreamingWithLockBatchMode()) {
-//            sqlgGraph.tx().addElementPropertyRollback(this.elementPropertyRollback);
+//        if (!this.graph.tx().isInStreamingBatchMode() && !this.graph.tx().isInStreamingWithLockBatchMode()) {
+//            graph.tx().addElementPropertyRollback(this.elementPropertyRollback);
 //        }
     }
 
     public SqlgElement(SqlgGraph sqlgGraph, Long id, String schema, String table) {
-        if (table.startsWith(SchemaManager.VERTEX_PREFIX) || table.startsWith(SchemaManager.EDGE_PREFIX)) {
-            throw new IllegalStateException("SqlgElement.table may not be prefixed with " + SchemaManager.VERTEX_PREFIX + " or " + SchemaManager.EDGE_PREFIX);
+        if (table.startsWith(VERTEX_PREFIX) || table.startsWith(EDGE_PREFIX)) {
+            throw new IllegalStateException("SqlgElement.table may not be prefixed with " + VERTEX_PREFIX + " or " + EDGE_PREFIX);
         }
         this.sqlgGraph = sqlgGraph;
         this.schema = schema;
         this.table = table;
         this.recordId = RecordId.from(SchemaTable.of(this.schema, this.table), id);
         this.elementPropertyRollback = new SqlgElementElementPropertyRollback();
-//        if (!this.sqlgGraph.tx().isInStreamingBatchMode() && !this.sqlgGraph.tx().isInStreamingWithLockBatchMode()) {
-//            sqlgGraph.tx().addElementPropertyRollback(this.elementPropertyRollback);
+//        if (!this.graph.tx().isInStreamingBatchMode() && !this.graph.tx().isInStreamingWithLockBatchMode()) {
+//            graph.tx().addElementPropertyRollback(this.elementPropertyRollback);
 //        }
     }
 
@@ -88,7 +91,7 @@ public abstract class SqlgElement implements Element {
         this.recordId = recordId;
     }
 
-    abstract SchemaTable getSchemaTablePrefixed();
+    public abstract SchemaTable getSchemaTablePrefixed();
 
     @Override
     public Object id() {
@@ -103,11 +106,11 @@ public abstract class SqlgElement implements Element {
     @Override
     public void remove() {
         StringBuilder sql = new StringBuilder("DELETE FROM ");
-        sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes(this.schema));
+        sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.schema));
         sql.append(".");
-        sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes((this instanceof Vertex ? SchemaManager.VERTEX_PREFIX : SchemaManager.EDGE_PREFIX) + this.table));
+        sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes((this instanceof Vertex ? VERTEX_PREFIX : EDGE_PREFIX) + this.table));
         sql.append(" WHERE ");
-        sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes("ID"));
+        sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID"));
         sql.append(" = ?");
         if (this.sqlgGraph.getSqlDialect().needsSemicolon()) {
             sql.append(";");
@@ -132,13 +135,13 @@ public abstract class SqlgElement implements Element {
             for (GlobalUniqueIndex globalUniqueIndex : propertyColumn.getGlobalUniqueIndices()) {
 
                 StringBuilder sql = new StringBuilder("DELETE FROM ");
-                sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes(Schema.GLOBAL_UNIQUE_INDEX_SCHEMA));
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(Schema.GLOBAL_UNIQUE_INDEX_SCHEMA));
                 sql.append(".");
-                sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes(SchemaManager.VERTEX_PREFIX + globalUniqueIndex.getName()));
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(VERTEX_PREFIX + globalUniqueIndex.getName()));
                 sql.append(" WHERE ");
-                sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes("recordId"));
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("recordId"));
                 sql.append(" = ? AND ");
-                sql.append(this.sqlgGraph.getSchemaManager().getSqlDialect().maybeWrapInQoutes("property"));
+                sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("property"));
                 sql.append(" = ?");
                 if (this.sqlgGraph.getSqlDialect().needsSemicolon()) {
                     sql.append(";");
@@ -165,35 +168,29 @@ public abstract class SqlgElement implements Element {
         return this.internalGetProperties().keySet();
     }
 
-    //TODO relook at hiddens, unnecessary looping and queries
     @Override
     public <V> Property<V> property(String key) {
         if (this.removed) {
             throw Element.Exceptions.elementAlreadyRemoved(this.getClass(), this.id());
         } else {
-            Property property = internalGetProperties().get(key);
-            if (property == null) {
-                return emptyProperty();
-//                //try hiddens
-//                property = internalGetHiddens().get(key);
-//                if (property == null) {
-//                    return emptyProperty();
-//                } else {
-//                    return property;
-//                }
+            load();
+            V propertyValue = (V) this.properties.get(key);
+            if (propertyValue != null) {
+                return instantiateProperty(key, propertyValue);
             } else {
-                return property;
+                return emptyProperty();
             }
         }
     }
 
-    protected Property emptyProperty() {
+    protected <V> Property<V> emptyProperty() {
         return Property.empty();
     }
 
     @Override
     public <V> Property<V> property(String key, V value) {
         ElementHelper.validateProperty(key, value);
+        this.sqlgGraph.tx().readWrite();
         this.sqlgGraph.getSqlDialect().validateProperty(key, value);
         if (!this.sqlgGraph.tx().isInStreamingBatchMode() && !this.sqlgGraph.tx().isInStreamingWithLockBatchMode()) {
             sqlgGraph.tx().addElementPropertyRollback(this.elementPropertyRollback);
@@ -210,7 +207,7 @@ public abstract class SqlgElement implements Element {
                     columns
             );
         } else {
-            Map<String, PropertyType> columns = new HashedMap<>();
+            Map<String, PropertyType> columns = new HashMap<>();
             columns.put(key, PropertyType.from(value));
             this.sqlgGraph.getTopology().ensureEdgePropertiesExist(
                     this.schema,
@@ -242,7 +239,7 @@ public abstract class SqlgElement implements Element {
     private void updateRow(String key, Object value) {
 
         boolean elementInInsertedCache = false;
-        if (this.sqlgGraph.features().supportsBatchMode() && this.sqlgGraph.tx().isInBatchMode()) {
+        if (this.sqlgGraph.getSqlDialect().supportsBatchMode() && this.sqlgGraph.tx().isInBatchMode()) {
             elementInInsertedCache = this.sqlgGraph.tx().getBatchManager().updateProperty(this, key, value);
         }
 
@@ -274,7 +271,7 @@ public abstract class SqlgElement implements Element {
                 SqlgElement.updateGlobalUniqueIndex(this.sqlgGraph, globalUniqueIndex, this.recordId, propertyColumnObjectPair);
             }
 
-            String tableName = (this instanceof Vertex ? SchemaManager.VERTEX_PREFIX : SchemaManager.EDGE_PREFIX) + this.table;
+            String tableName = (this instanceof Vertex ? VERTEX_PREFIX : EDGE_PREFIX) + this.table;
             StringBuilder sql = new StringBuilder("UPDATE ");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(this.schema));
             sql.append(".");
@@ -283,16 +280,16 @@ public abstract class SqlgElement implements Element {
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(key));
             sql.append(" = ?");
             // some data types require several columns in the db, make sure to update them all
-            PropertyType pt=PropertyType.from(value);
-            String[] postfixes=this.sqlgGraph.getSqlDialect().propertyTypeToSqlDefinition(pt);
-            if (postfixes!=null && postfixes.length>1){
-            	for (int i=1;i<postfixes.length;i++){
-            		sql.append(",");
-            		sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(key+pt.getPostFixes()[i-1]));
+            PropertyType pt = PropertyType.from(value);
+            String[] postfixes = this.sqlgGraph.getSqlDialect().propertyTypeToSqlDefinition(pt);
+            if (postfixes != null && postfixes.length > 1) {
+                for (int i = 1; i < postfixes.length; i++) {
+                    sql.append(",");
+                    sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(key + pt.getPostFixes()[i - 1]));
                     sql.append(" = ?");
-            	}
+                }
             }
-            
+
             sql.append(" WHERE ");
             sql.append(this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID"));
             sql.append(" = ?");
@@ -307,7 +304,7 @@ public abstract class SqlgElement implements Element {
                 Map<String, Object> keyValue = new HashMap<>();
                 keyValue.put(key, value);
                 // the index of the id column in the statement depend on how many columns we had to use to store that data type
-                int idx=setKeyValuesAsParameter(this.sqlgGraph, 1, preparedStatement, keyValue);
+                int idx = setKeyValuesAsParameter(this.sqlgGraph, 1, preparedStatement, keyValue);
                 preparedStatement.setLong(idx, ((RecordId) this.id()).getId());
                 preparedStatement.executeUpdate();
                 preparedStatement.close();
@@ -320,37 +317,6 @@ public abstract class SqlgElement implements Element {
         this.properties.put(key, value);
     }
 
-
-    /**
-     * Called from SqlgVertexStepCompiler which compiled VertexStep and HasSteps.
-     * This is only called when not in BatchMode
-     *
-     * @param replacedSteps The original VertexStep and HasSteps that were replaced.
-     * @return The result of the query.
-     * //
-     */
-    public <S, E extends SqlgElement> Iterator<List<Emit<E>>> elements(List<ReplacedStep<S, E>> replacedSteps) {
-        this.sqlgGraph.tx().readWrite();
-        if (this.sqlgGraph.tx().getBatchManager().isStreaming()) {
-            throw new IllegalStateException("streaming is in progress, first flush or commit before querying.");
-        }
-        return internalGetElements(replacedSteps);
-    }
-
-    /**
-     * Generate a query for the replaced steps.
-     * Each replaced step translates to a join statement and a section of the where clause.
-     *
-     * @param replacedSteps
-     * @return The results of the query
-     */
-    private <S, E extends SqlgElement> Iterator<List<Emit<E>>> internalGetElements(List<ReplacedStep<S, E>> replacedSteps) {
-        SchemaTable schemaTable = getSchemaTablePrefixed();
-        SchemaTableTree rootSchemaTableTree = this.sqlgGraph.getGremlinParser().parse(schemaTable, replacedSteps);
-        Set<SchemaTableTree> rootSchemaTableTrees = new HashSet<>();
-        rootSchemaTableTrees.add(rootSchemaTableTree);
-        return new SqlgCompiledResultIterator<>(this.sqlgGraph, rootSchemaTableTrees, this.recordId);
-    }
 
     @Override
     public boolean equals(final Object object) {
@@ -368,15 +334,13 @@ public abstract class SqlgElement implements Element {
 
     @Override
     public int hashCode() {
-        this.sqlgGraph.tx().readWrite();
+        if (this.id() != null) {
+            return id().hashCode();
+        }
         if (this.sqlgGraph.features().supportsBatchMode() && this.sqlgGraph.tx().isInBatchMode()) {
-            // if we have an ID, we have a constant hashcode
-            if (this.id() != null) {
-                return ElementHelper.hashCode(this);
-            }
             return super.hashCode();
         } else {
-            return ElementHelper.hashCode(this);
+            return id().hashCode();
         }
     }
 
@@ -391,35 +355,38 @@ public abstract class SqlgElement implements Element {
         return SqlgUtil.setKeyValuesAsParameter(sqlgGraph, true, parameterStartIndex++, preparedStatement, typeAndValues);
     }
 
-//    protected <V> Map<String, ? extends Property<V>> internalGetAllProperties(final String... propertyKeys) {
-//        this.sqlgGraph.tx().readWrite();
-//        load();
-//        Map<String, SqlgProperty<V>> properties = new HashMap<>();
-//        this.properties.entrySet().stream()
-//                .filter(entry -> propertyKeys.length == 0 || Stream.of(propertyKeys).filter(k -> k.equals(entry.getKey())).findAny().isPresent())
-//                .filter(entry -> !entry.getKey().equals("ID"))
-//                .filter(entry -> entry.getValue() != null)
-//                .forEach(entry -> properties.put(entry.getKey(), instantiateProperty(entry.getKey(), (V) entry.getValue())));
-//        return properties;
-//    }
-
     protected <V> Map<String, ? extends Property<V>> internalGetProperties(final String... propertyKeys) {
-        this.sqlgGraph.tx().readWrite();
         load();
         Map<String, SqlgProperty<V>> properties = new HashMap<>();
-        this.properties.entrySet().stream()
-                .filter(entry -> propertyKeys.length == 0 || Stream.of(propertyKeys).filter(k -> k.equals(entry.getKey())).findAny().isPresent())
-                .filter(entry -> !entry.getKey().equals("ID"))
-                .filter(entry -> entry.getValue() != null)
-                .forEach(entry -> properties.put(entry.getKey(), instantiateProperty(entry.getKey(), (V) entry.getValue())));
+
+        //Check the propertyKeys parameter
+        if (propertyKeys.length > 0) {
+            for (String propertyKey : propertyKeys) {
+                if (!propertyKey.equals(Topology.ID)) {
+                    V propertyValue = (V) this.properties.get(propertyKey);
+                    if (propertyValue != null) {
+                        properties.put(propertyKey, instantiateProperty(propertyKey, propertyValue));
+                    }
+                }
+            }
+        } else {
+            for (Map.Entry<String, Object> propertyEntry : this.properties.entrySet()) {
+                String key = propertyEntry.getKey();
+                V propertyValue = (V) propertyEntry.getValue();
+                if (key.equals(Topology.ID) || propertyValue == null) {
+                    continue;
+                }
+                properties.put(key, instantiateProperty(key, propertyValue));
+            }
+        }
         return properties;
     }
 
-    protected void writeColumnNames(Map<String, Pair<PropertyColumn, Object>> keyValueMap, StringBuilder sql) {
+    protected void writeColumnNames(Map<String, Pair<PropertyType, Object>> keyValueMap, StringBuilder sql) {
         int i = 1;
         for (String column : keyValueMap.keySet()) {
-            Pair<PropertyColumn, Object> propertyColumnValue = keyValueMap.get(column);
-            PropertyType propertyType = propertyColumnValue.getLeft().getPropertyType();
+            Pair<PropertyType, Object> propertyColumnValue = keyValueMap.get(column);
+            PropertyType propertyType = propertyColumnValue.getLeft();
             String[] sqlDefinitions = this.sqlgGraph.getSqlDialect().propertyTypeToSqlDefinition(propertyType);
             int count = 1;
             for (@SuppressWarnings("unused") String sqlDefinition : sqlDefinitions) {
@@ -438,10 +405,10 @@ public abstract class SqlgElement implements Element {
         }
     }
 
-    protected void writeColumnParameters(Map<String, Pair<PropertyColumn, Object>> keyValueMap, StringBuilder sql) {
+    protected void writeColumnParameters(Map<String, Pair<PropertyType, Object>> keyValueMap, StringBuilder sql) {
         int i = 1;
         for (String column : keyValueMap.keySet()) {
-            PropertyType propertyType = keyValueMap.get(column).getLeft().getPropertyType();
+            PropertyType propertyType = keyValueMap.get(column).getLeft();
             String[] sqlDefinitions = this.sqlgGraph.getSqlDialect().propertyTypeToSqlDefinition(propertyType);
             int count = 1;
             for (@SuppressWarnings("unused") String sqlDefinition : sqlDefinitions) {
@@ -480,11 +447,20 @@ public abstract class SqlgElement implements Element {
             );
         } else {
             //Need to insert null values else the update the code will not work.
-            sqlgGraph.addVertex(
-                    T.label, Schema.GLOBAL_UNIQUE_INDEX_SCHEMA + "." + globalUniqueIndex.getName(),
-                    GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_RECORD_ID, this.recordId.toString(),
-                    GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_PROPERTY_NAME, propertyColumnObjectPair.getKey().getName()
-            );
+            if (sqlgGraph.getSqlDialect().uniqueIndexConsidersNullValuesEqual()) {
+                sqlgGraph.addVertex(
+                        T.label, Schema.GLOBAL_UNIQUE_INDEX_SCHEMA + "." + globalUniqueIndex.getName(),
+                        GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_VALUE, "dummy_" + UUID.randomUUID().toString(),
+                        GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_RECORD_ID, this.recordId.toString(),
+                        GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_PROPERTY_NAME, propertyColumnObjectPair.getKey().getName()
+                );
+            } else {
+                sqlgGraph.addVertex(
+                        T.label, Schema.GLOBAL_UNIQUE_INDEX_SCHEMA + "." + globalUniqueIndex.getName(),
+                        GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_RECORD_ID, this.recordId.toString(),
+                        GlobalUniqueIndex.GLOBAL_UNIQUE_INDEX_PROPERTY_NAME, propertyColumnObjectPair.getKey().getName()
+                );
+            }
         }
     }
 
@@ -512,15 +488,15 @@ public abstract class SqlgElement implements Element {
 
     @Override
     public <V> Iterator<? extends Property<V>> properties(final String... propertyKeys) {
-        SqlgElement.this.sqlgGraph.tx().readWrite();
+//        SqlgElement.this.sqlgGraph.tx().readWrite();
         return SqlgElement.this.<V>internalGetProperties(propertyKeys).values().iterator();
     }
 
     public void loadProperty(ResultSet resultSet, String propertyName, int columnIndex, Map<String, String> columnNameAliasMap, int stepDepth, PropertyType propertyType) throws SQLException {
-        if (propertyName.endsWith(SchemaManager.ZONEID) ||
-                propertyName.endsWith(SchemaManager.MONTHS) ||
-                propertyName.endsWith(SchemaManager.DAYS) ||
-                propertyName.endsWith(SchemaManager.DURATION_NANOS)
+        if (propertyName.endsWith(Topology.ZONEID) ||
+                propertyName.endsWith(Topology.MONTHS) ||
+                propertyName.endsWith(Topology.DAYS) ||
+                propertyName.endsWith(Topology.DURATION_NANOS)
                 ) {
             return;
         }
@@ -675,7 +651,7 @@ public abstract class SqlgElement implements Element {
                 break;
             case boolean_ARRAY:
                 java.sql.Array array = resultSet.getArray(columnIndex);
-                if (array != null)  {
+                if (array != null) {
                     this.properties.put(propertyName, this.sqlgGraph.getSqlDialect().convertArray(propertyType, array));
                 }
                 break;
@@ -860,10 +836,10 @@ public abstract class SqlgElement implements Element {
     }
 
     void loadProperty(ResultSet resultSet, String propertyName, int columnIndex) throws SQLException {
-        if (propertyName.endsWith(SchemaManager.ZONEID) ||
-                propertyName.endsWith(SchemaManager.MONTHS) ||
-                propertyName.endsWith(SchemaManager.DAYS) ||
-                propertyName.endsWith(SchemaManager.DURATION_NANOS)
+        if (propertyName.endsWith(Topology.ZONEID) ||
+                propertyName.endsWith(Topology.MONTHS) ||
+                propertyName.endsWith(Topology.DAYS) ||
+                propertyName.endsWith(Topology.DURATION_NANOS)
                 ) {
             return;
         }
@@ -873,4 +849,11 @@ public abstract class SqlgElement implements Element {
 
     public abstract void loadResultSet(ResultSet resultSet) throws SQLException;
 
+    public long getInternalStartTraverserIndex() {
+        return this.internalStartTraverserIndex;
+    }
+
+    public void setInternalStartTraverserIndex(long internalStartTraverserIndex) {
+        this.internalStartTraverserIndex = internalStartTraverserIndex;
+    }
 }

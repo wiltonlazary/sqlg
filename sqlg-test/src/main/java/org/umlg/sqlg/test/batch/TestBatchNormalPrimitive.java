@@ -5,10 +5,7 @@ import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
 import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
-import org.junit.Assume;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.test.BaseTest;
 
@@ -18,7 +15,9 @@ import java.lang.reflect.Array;
 import java.util.HashSet;
 import java.util.Set;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Date: 2016/05/22
@@ -29,7 +28,7 @@ public class TestBatchNormalPrimitive extends BaseTest {
     @BeforeClass
     public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
         BaseTest.beforeClass();
-        if (configuration.getString("jdbc.url").contains("postgresql")) {
+        if (isPostgres()) {
             configuration.addProperty("distributed", true);
         }
     }
@@ -525,6 +524,7 @@ public class TestBatchNormalPrimitive extends BaseTest {
 
     @Test
     public void testFloat() throws InterruptedException {
+        Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsFloatValues());
         this.sqlgGraph.tx().normalBatchModeOn();
         Set<Vertex> vertexSet = new HashSet<>();
         Set<Float> vertexNameSet = new HashSet<>();
@@ -550,6 +550,7 @@ public class TestBatchNormalPrimitive extends BaseTest {
 
     @Test
     public void testFloatEdge() throws InterruptedException {
+        Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsFloatValues());
         this.sqlgGraph.tx().normalBatchModeOn();
         Set<Edge> edgeSet = new HashSet<>();
         Set<Float> edgeNameSet = new HashSet<>();
@@ -577,6 +578,7 @@ public class TestBatchNormalPrimitive extends BaseTest {
 
     @Test
     public void testFloatPrimitive() throws InterruptedException {
+        Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsFloatValues());
         this.sqlgGraph.tx().normalBatchModeOn();
         float[] vertexNameArray = new float[10];
         for (float i = 0; i < 10; i++) {
@@ -603,6 +605,7 @@ public class TestBatchNormalPrimitive extends BaseTest {
 
     @Test
     public void testFloatPrimitiveEdge() throws InterruptedException {
+        Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsFloatValues());
         this.sqlgGraph.tx().normalBatchModeOn();
         float[] edgeNameArray = new float[10];
         for (float i = 0; i < 10; i++) {

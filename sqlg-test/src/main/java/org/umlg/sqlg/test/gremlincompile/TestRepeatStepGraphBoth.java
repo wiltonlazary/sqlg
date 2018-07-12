@@ -2,6 +2,7 @@ package org.umlg.sqlg.test.gremlincompile;
 
 import org.apache.tinkerpop.gremlin.process.traversal.P;
 import org.apache.tinkerpop.gremlin.process.traversal.Path;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.__;
 import org.apache.tinkerpop.gremlin.structure.Column;
@@ -10,18 +11,90 @@ import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.junit.Assert;
 import org.junit.Test;
+import org.umlg.sqlg.step.SqlgGraphStep;
+import org.umlg.sqlg.step.SqlgVertexStep;
 import org.umlg.sqlg.test.BaseTest;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Date: 2015/10/21
  * Time: 8:18 PM
  */
 public class TestRepeatStepGraphBoth extends BaseTest {
+
+    @Test
+    public void testEmitRepeatWithVertexStepAfter() {
+        Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "name", "a1");
+        Vertex a2 = this.sqlgGraph.addVertex(T.label, "A", "name", "a2");
+        Vertex b1 = this.sqlgGraph.addVertex(T.label, "B", "name", "b1");
+        Vertex b2 = this.sqlgGraph.addVertex(T.label, "B", "name", "b2");
+        Vertex b3 = this.sqlgGraph.addVertex(T.label, "B", "name", "b3");
+        Vertex c1 = this.sqlgGraph.addVertex(T.label, "C", "name", "c1");
+        Vertex c2 = this.sqlgGraph.addVertex(T.label, "C", "name", "c2");
+        Vertex c3 = this.sqlgGraph.addVertex(T.label, "C", "name", "c3");
+        a1.addEdge("ab", b1);
+        a1.addEdge("ab", b2);
+        a1.addEdge("ab", b3);
+        b1.addEdge("bc", c1);
+        b2.addEdge("bc", c2);
+        b2.addEdge("bc", c3);
+        this.sqlgGraph.tx().commit();
+
+        DefaultGraphTraversal<Vertex, Vertex> traversal = (DefaultGraphTraversal<Vertex, Vertex>) this.sqlgGraph.traversal().V().hasLabel("A")
+                .repeat(__.out()).emit().times(3)
+                .out();
+        printTraversalForm(traversal);
+        Assert.assertEquals(2, traversal.getSteps().size());
+        Assert.assertTrue(traversal.getSteps().get(0) instanceof SqlgGraphStep);
+        Assert.assertTrue(traversal.getSteps().get(1) instanceof SqlgVertexStep);
+
+        List<Vertex> vertices = traversal.toList();
+        Assert.assertEquals(3, vertices.size());
+        Assert.assertTrue(vertices.containsAll(Arrays.asList(c1, c2, c3)));
+
+    }
+
+    @Test
+    public void g_V_untilXout_outX_repeatXin_asXaX_in_asXbXX_selectXa_bX_byXnameX() {
+        loadModern();
+
+        final Traversal<Vertex, Map<String, String>> traversal = this.sqlgGraph.traversal()
+                .V()
+                .until(__.out().out())
+                .repeat(__.in().as("a").in().as("b"))
+                .<String>select("a", "b").by("name");
+        Map<String, String> result = traversal.next();
+        Assert.assertEquals(2, result.size());
+        Assert.assertEquals("josh", result.get("a"));
+        Assert.assertEquals("marko", result.get("b"));
+        result = traversal.next();
+        Assert.assertEquals(2, result.size());
+        Assert.assertEquals("josh", result.get("a"));
+        Assert.assertEquals("marko", result.get("b"));
+        Assert.assertFalse(traversal.hasNext());
+    }
+
+    @Test
+    public void g_V_asXaX_repeatXbothX_timesX3X_emit_asXbX_group_byXselectXaXX_byXselectXbX_dedup_order_byXidX_foldX_selectXvaluesX_unfold_dedup() {
+        loadModern();
+        final Traversal<Vertex, Collection<String>> traversal = this.sqlgGraph.traversal()
+                .V().as("a")
+                .repeat(__.both()).times(3).emit().values("name").as("b")
+                .group()
+                .by(__.select("a"))
+                .by(__.select("b").dedup().order().fold())
+                .select(Column.values).<Collection<String>>unfold().dedup();
+        final List<String> vertices = new ArrayList<>(traversal.next());
+        Assert.assertFalse(traversal.hasNext());
+        Assert.assertEquals(6, vertices.size());
+        Assert.assertEquals("josh", vertices.get(0));
+        Assert.assertEquals("lop", vertices.get(1));
+        Assert.assertEquals("marko", vertices.get(2));
+        Assert.assertEquals("peter", vertices.get(3));
+        Assert.assertEquals("ripple", vertices.get(4));
+        Assert.assertEquals("vadas", vertices.get(5));
+    }
 
     @Test
     public void testRepeatBoth() {
@@ -154,7 +227,15 @@ public class TestRepeatStepGraphBoth extends BaseTest {
         Edge e2 = b1.addEdge("bc", c1);
         this.sqlgGraph.tx().commit();
         DefaultGraphTraversal<Vertex, Path> traversal = (DefaultGraphTraversal<Vertex, Path>) this.sqlgGraph.traversal()
-                .V(b1).repeat(__.bothE().where(P.without("e")).aggregate("e").otherV()).emit().path();
+                .V(b1)
+                .repeat(
+                        __.bothE()
+                                .where(P.without("e"))
+                                .aggregate("e")
+                                .otherV()
+                )
+                .emit()
+                .path();
         Assert.assertEquals(3, traversal.getSteps().size());
         List<Path> paths = traversal.toList();
         Assert.assertEquals(3, traversal.getSteps().size());

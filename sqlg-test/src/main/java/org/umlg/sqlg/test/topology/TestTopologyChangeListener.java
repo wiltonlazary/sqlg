@@ -4,10 +4,10 @@ import org.apache.commons.lang3.tuple.Triple;
 import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.umlg.sqlg.structure.*;
+import org.umlg.sqlg.structure.topology.*;
 import org.umlg.sqlg.test.BaseTest;
 
 import static org.junit.Assert.assertEquals;
@@ -113,6 +113,10 @@ public class TestTopologyChangeListener extends BaseTest {
 			super();
 			this.topologyListenerTriple = topologyListenerTriple;
 		}
+        
+        public TopologyListenerTest(){
+        	
+        }
 
 		@Override
         public void change(TopologyInf topologyInf, String oldValue, TopologyChangeAction action) {
@@ -123,5 +127,22 @@ public class TestTopologyChangeListener extends BaseTest {
                     Triple.of(topologyInf, oldValue, action)
             );
         }
+		
+		public List<Triple<TopologyInf, String, TopologyChangeAction>> getTopologyListenerTriple() {
+			return topologyListenerTriple;
+		}
+		
+		public boolean receivedEvent(TopologyInf topologyInf, TopologyChangeAction action){
+			for (Triple<TopologyInf, String, TopologyChangeAction> t:topologyListenerTriple){
+				if (t.getLeft().equals(topologyInf) && t.getRight().equals(action)){
+					return true;
+				}
+			}
+			return false;
+		}
+		
+		public void reset(){
+			topologyListenerTriple.clear();
+		}
     }
 }

@@ -9,6 +9,9 @@ import java.io.IOException;
 import java.io.Writer;
 import java.util.*;
 
+import static org.umlg.sqlg.structure.topology.Topology.EDGE_PREFIX;
+import static org.umlg.sqlg.structure.topology.Topology.VERTEX_PREFIX;
+
 /**
  * Date: 2014/09/12
  * Time: 5:08 PM
@@ -93,8 +96,8 @@ public class BatchManager {
 
     }
 
-    void addVertex(boolean streaming, SqlgVertex sqlgVertex, Map<String, Object> keyValueMap) {
-        SchemaTable schemaTable = SchemaTable.of(sqlgVertex.getSchema(), sqlgVertex.getTable());
+    void addVertex(boolean temporary, boolean streaming, SqlgVertex sqlgVertex, Map<String, Object> keyValueMap) {
+        SchemaTable schemaTable = SchemaTable.of(sqlgVertex.getSchema(), sqlgVertex.getTable(), temporary);
         if (!streaming) {
             Pair<SortedSet<String>, Map<SqlgVertex, Map<String, Object>>> pairs = this.vertexCache.get(schemaTable);
             if (pairs == null) {
@@ -117,8 +120,8 @@ public class BatchManager {
             }
             if (this.isInStreamingModeWithLock() && this.batchCount == 0) {
                 //lock the table,
-                this.sqlDialect.lockTable(sqlgGraph, schemaTable, SchemaManager.VERTEX_PREFIX);
-                this.batchIndex = this.sqlDialect.nextSequenceVal(sqlgGraph, schemaTable, SchemaManager.VERTEX_PREFIX);
+                this.sqlDialect.lockTable(sqlgGraph, schemaTable, VERTEX_PREFIX);
+                this.batchIndex = this.sqlDialect.nextSequenceVal(sqlgGraph, schemaTable, VERTEX_PREFIX);
             }
             if (this.isInStreamingModeWithLock()) {
                 sqlgVertex.setInternalPrimaryKey(RecordId.from(schemaTable, ++this.batchIndex));
@@ -161,8 +164,8 @@ public class BatchManager {
             }
             if (this.isInStreamingModeWithLock() && this.batchCount == 0) {
                 //lock the table,
-                this.sqlDialect.lockTable(sqlgGraph, outSchemaTable, SchemaManager.EDGE_PREFIX);
-                this.batchIndex = this.sqlDialect.nextSequenceVal(sqlgGraph, outSchemaTable, SchemaManager.EDGE_PREFIX);
+                this.sqlDialect.lockTable(sqlgGraph, outSchemaTable, EDGE_PREFIX);
+                this.batchIndex = this.sqlDialect.nextSequenceVal(sqlgGraph, outSchemaTable, EDGE_PREFIX);
             }
             if (this.isInStreamingModeWithLock()) {
                 sqlgEdge.setInternalPrimaryKey(RecordId.from(outSchemaTable, ++this.batchIndex));
@@ -184,9 +187,9 @@ public class BatchManager {
         }
     }
 
-    public Map<SchemaTable, Pair<Long, Long>> flush() {
+    public void flush() {
         this.isBusyFlushing = true;
-        Map<SchemaTable, Pair<Long, Long>> verticesRange = this.sqlDialect.flushVertexCache(this.sqlgGraph, this.vertexCache);
+        this.sqlDialect.flushVertexCache(this.sqlgGraph, this.vertexCache);
         this.sqlDialect.flushEdgeCache(this.sqlgGraph, this.edgeCache);
         this.sqlDialect.flushVertexPropertyCache(this.sqlgGraph, this.vertexPropertyCache);
         this.sqlDialect.flushEdgePropertyCache(this.sqlgGraph, this.edgePropertyCache);
@@ -200,7 +203,6 @@ public class BatchManager {
         this.sqlDialect.flushEdgeGlobalUniqueIndexPropertyCache(this.sqlgGraph, this.edgePropertyCache);
         this.sqlDialect.flushRemovedGlobalUniqueIndexVertices(this.sqlgGraph, this.removeVertexCache);
         this.clear();
-        return verticesRange;
     }
 
     public void close() {

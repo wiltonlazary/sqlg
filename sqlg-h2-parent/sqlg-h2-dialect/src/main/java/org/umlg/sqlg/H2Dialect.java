@@ -14,6 +14,7 @@ import org.umlg.sqlg.structure.SchemaTable;
 import org.umlg.sqlg.structure.SqlgGraph;
 import org.umlg.sqlg.util.SqlgUtil;
 
+import java.io.IOException;
 import java.lang.reflect.Array;
 import java.sql.*;
 import java.time.*;
@@ -30,6 +31,16 @@ public class H2Dialect extends BaseSqlDialect {
     }
 
     @Override
+    public boolean supportsCascade() {
+        return false;
+    }
+
+    @Override
+    public boolean supportsBatchMode() {
+        return true;
+    }
+
+    @Override
     public String dialectName() {
         return "H2Dialect";
     }
@@ -40,14 +51,14 @@ public class H2Dialect extends BaseSqlDialect {
     }
 
     @Override
-    public Set<String> getDefaultSchemas() {
-        return ImmutableSet.of("PUBLIC", "INFORMATION_SCHEMA");
+    public Set<String> getInternalSchemas() {
+        return ImmutableSet.of("INFORMATION_SCHEMA");
     }
 
     @Override
-    public String createSchemaStatement() {
+    public String createSchemaStatement(String schemaName) {
         // if ever schema is created outside of sqlg while the graph is already instantiated
-        return "CREATE SCHEMA IF NOT EXISTS ";
+        return "CREATE SCHEMA IF NOT EXISTS " + maybeWrapInQoutes(schemaName);
     }
 
     @Override
@@ -193,6 +204,9 @@ public class H2Dialect extends BaseSqlDialect {
         if (value instanceof Duration || value instanceof Duration[]) {
             return;
         }
+        if (value instanceof JsonNode|| value instanceof JsonNode[]) {
+            return;
+        }
         throw Property.Exceptions.dataTypeOfPropertyValueNotSupported(value);
     }
 
@@ -270,7 +284,9 @@ public class H2Dialect extends BaseSqlDialect {
             case ZONEDDATETIME_ARRAY:
                 return new String[]{"ARRAY", "ARRAY"};
             case JSON:
-                throw new IllegalStateException("H2 does not support json types, use good ol string instead!");
+                return new String[]{"VARCHAR"};
+            case JSON_ARRAY:
+                return new String[]{"ARRAY"};
             case POINT:
                 throw new IllegalStateException("H2 does not support gis types!");
             case POLYGON:
@@ -287,41 +303,46 @@ public class H2Dialect extends BaseSqlDialect {
     }
 
     @Override
-    public int propertyTypeToJavaSqlType(PropertyType propertyType) {
+    public int[] propertyTypeToJavaSqlType(PropertyType propertyType) {
         switch (propertyType) {
             case BOOLEAN:
-                return Types.BOOLEAN;
+                return new int[]{Types.BOOLEAN};
             case BYTE:
-                return Types.TINYINT;
+                return new int[]{Types.TINYINT};
             case SHORT:
-                return Types.SMALLINT;
+                return new int[]{Types.SMALLINT};
             case INTEGER:
-                return Types.INTEGER;
+                return new int[]{Types.INTEGER};
             case LONG:
-                return Types.BIGINT;
+                return new int[]{Types.BIGINT};
             case FLOAT:
-                return Types.REAL;
+                return new int[]{Types.REAL};
             case DOUBLE:
-                return Types.DOUBLE;
+                return new int[]{Types.DOUBLE};
             case STRING:
-                return Types.CLOB;
+                return new int[]{Types.CLOB};
             case LOCALDATETIME:
-                return Types.TIMESTAMP;
+                return new int[]{Types.TIMESTAMP};
             case LOCALDATE:
-                return Types.DATE;
+                return new int[]{Types.DATE};
             case LOCALTIME:
-                return Types.TIME;
+                return new int[]{Types.TIME};
+            case ZONEDDATETIME:
+                return new int[]{Types.TIMESTAMP, Types.CLOB};
+            case DURATION:
+                return new int[]{Types.BIGINT, Types.INTEGER};
+            case PERIOD:
+                return new int[]{Types.INTEGER, Types.INTEGER, Types.INTEGER};
             case JSON:
-                return Types.VARCHAR;
+                return new int[]{Types.VARCHAR};
             case byte_ARRAY:
-                return Types.BINARY;
+                return new int[]{Types.BINARY};
             case BYTE_ARRAY:
-                return Types.BINARY;
+                return new int[]{Types.BINARY};
             case BOOLEAN_ARRAY:
             case boolean_ARRAY:
             case DOUBLE_ARRAY:
             case double_ARRAY:
-            case DURATION_ARRAY:
             case FLOAT_ARRAY:
             case float_ARRAY:
             case int_ARRAY:
@@ -334,7 +355,15 @@ public class H2Dialect extends BaseSqlDialect {
             case SHORT_ARRAY:
             case short_ARRAY:
             case STRING_ARRAY:
-                return Types.ARRAY;
+                return new int[]{Types.ARRAY};
+            case ZONEDDATETIME_ARRAY:
+                return new int[]{Types.ARRAY, Types.ARRAY};
+            case DURATION_ARRAY:
+                return new int[]{Types.ARRAY, Types.ARRAY};
+            case PERIOD_ARRAY:
+                return new int[]{Types.ARRAY, Types.ARRAY, Types.ARRAY};
+            case JSON_ARRAY:
+                return new int[]{Types.ARRAY};
             default:
                 throw new IllegalStateException("Unknown propertyType " + propertyType.name());
         }
@@ -475,16 +504,6 @@ public class H2Dialect extends BaseSqlDialect {
     }
 
     @Override
-    public void setJson(PreparedStatement preparedStatement, int parameterStartIndex, JsonNode right) {
-        throw new IllegalStateException("H2 doesn't support storing JSON.");
-    }
-
-    @Override
-    public void handleOther(Map<String, Object> properties, String columnName, Object o, PropertyType propertyType) {
-        throw new IllegalStateException("H2 doesn't support other types.");
-    }
-
-    @Override
     public void setPoint(PreparedStatement preparedStatement, int parameterStartIndex, Object point) {
         throw new IllegalStateException("H2 does not support gis types, this should not have happened!");
     }
@@ -553,6 +572,7 @@ public class H2Dialect extends BaseSqlDialect {
     public List<String> sqlgTopologyCreationScripts() {
         List<String> result = new ArrayList<>();
 
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_graph\" (\"ID\" IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP, \"updatedOn\" TIMESTAMP, \"version\" VARCHAR);");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_schema\" (\"ID\" IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP, \"name\" VARCHAR);");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_vertex\" (\"ID\" IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP, \"name\" VARCHAR, \"schemaVertex\" VARCHAR);");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_edge\" (\"ID\" IDENTITY PRIMARY KEY, \"createdOn\" TIMESTAMP, \"name\" VARCHAR);");
@@ -571,7 +591,7 @@ public class H2Dialect extends BaseSqlDialect {
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_edge_property\"(\"ID\" IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.edge__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"),  FOREIGN KEY (\"sqlg_schema.edge__O\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\"));");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_vertex_index\"(\"ID\" IDENTITY PRIMARY KEY, \"sqlg_schema.index__I\" BIGINT, \"sqlg_schema.vertex__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.index__I\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.vertex__O\") REFERENCES \"sqlg_schema\".\"V_vertex\" (\"ID\"));");
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_edge_index\"(\"ID\" IDENTITY PRIMARY KEY, \"sqlg_schema.index__I\" BIGINT, \"sqlg_schema.edge__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.index__I\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.edge__O\") REFERENCES \"sqlg_schema\".\"V_edge\" (\"ID\"));");
-        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_index_property\"(\"ID\" IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.index__O\" BIGINT, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.index__O\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"));");
+        result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"E_index_property\"(\"ID\" IDENTITY PRIMARY KEY, \"sqlg_schema.property__I\" BIGINT, \"sqlg_schema.index__O\" BIGINT, \"sequence\" INTEGER, FOREIGN KEY (\"sqlg_schema.property__I\") REFERENCES \"sqlg_schema\".\"V_property\" (\"ID\"), FOREIGN KEY (\"sqlg_schema.index__O\") REFERENCES \"sqlg_schema\".\"V_index\" (\"ID\"));");
 
         result.add("CREATE TABLE IF NOT EXISTS \"sqlg_schema\".\"V_log\" (\"ID\" IDENTITY PRIMARY KEY, \"timestamp\" TIMESTAMP, \"pid\" INTEGER, \"log\" VARCHAR);");
 
@@ -580,10 +600,15 @@ public class H2Dialect extends BaseSqlDialect {
     }
 
     @Override
-    public String sqlgAddPropertyIndexTypeColumn() {
-        return "";
+    public String sqlgCreateTopologyGraph() {
+        return null;
     }
 
+    @Override
+    public String sqlgAddIndexEdgeSequenceColumn() {
+        return "ALTER TABLE \"sqlg_schema\".\"E_index_property\" ADD COLUMN \"sequence\" INTEGER DEFAULT 0;";
+    }
+    
     @Override
     public Object convertArray(PropertyType propertyType, java.sql.Array array) throws SQLException {
         switch (propertyType) {
@@ -626,6 +651,20 @@ public class H2Dialect extends BaseSqlDialect {
             case LOCALTIME_ARRAY:
                 Object[] times = (Object[]) array.getArray();
                 return SqlgUtil.copyObjectArrayOfTimeToLocalTime(times, new LocalTime[times.length]);
+            case JSON_ARRAY:
+                String[] jsons = SqlgUtil.convertObjectOfStringsArrayToStringArray((Object[]) array.getArray());
+                JsonNode[] jsonNodes = new JsonNode[jsons.length];
+                ObjectMapper objectMapper = new ObjectMapper();
+                int count = 0;
+                for (String json : jsons) {
+                    try {
+                        JsonNode jsonNode = objectMapper.readTree(json);
+                        jsonNodes[count++] = jsonNode;
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return jsonNodes;
             default:
                 throw new IllegalStateException("Unhandled property type " + propertyType.name());
         }
@@ -640,5 +679,98 @@ public class H2Dialect extends BaseSqlDialect {
     @Override
     public String getPublicSchema() {
         return "PUBLIC";
+    }
+
+    @Override
+    public boolean isSystemIndex(String indexName) {
+        return indexName.startsWith("PRIMARY_KEY_") || indexName.startsWith("CONSTRAINT_INDEX_");
+    }
+
+    @Override
+    public boolean supportsFullValueExpression() {
+        return false;
+    }
+
+    @Override
+    public String valueToValuesString(PropertyType propertyType, Object value) {
+        throw new RuntimeException("Not yet implemented");
+    }
+
+    @Override
+    public boolean supportsType(PropertyType propertyType) {
+        switch (propertyType) {
+            case BOOLEAN:
+                return true;
+            case BOOLEAN_ARRAY:
+                return true;
+            case boolean_ARRAY:
+                return true;
+            case BYTE:
+                return true;
+            case BYTE_ARRAY:
+                return true;
+            case byte_ARRAY:
+                return true;
+            case SHORT:
+                return true;
+            case short_ARRAY:
+                return true;
+            case SHORT_ARRAY:
+                return true;
+            case INTEGER:
+                return true;
+            case int_ARRAY:
+                return true;
+            case INTEGER_ARRAY:
+                return true;
+            case LONG:
+                return true;
+            case long_ARRAY:
+                return true;
+            case LONG_ARRAY:
+                return true;
+            case DOUBLE:
+                return true;
+            case DOUBLE_ARRAY:
+                return true;
+            case double_ARRAY:
+                return true;
+            case STRING:
+                return true;
+            case LOCALDATE:
+                return true;
+            case LOCALDATE_ARRAY:
+                return true;
+            case LOCALDATETIME:
+                return true;
+            case LOCALDATETIME_ARRAY:
+                return true;
+            case LOCALTIME:
+                return true;
+            case LOCALTIME_ARRAY:
+                return true;
+            case JSON:
+                return true;
+            case STRING_ARRAY:
+                return true;
+            default:
+                throw new IllegalStateException("Unknown propertyType " + propertyType.name());
+        }
+    }
+
+
+    @Override
+    public boolean supportsJsonArrayValues() {
+        return true;
+    }
+
+    @Override
+    public String sqlToTurnOffReferentialConstraintCheck(String tableName) {
+        return "SET REFERENTIAL_INTEGRITY FALSE";
+    }
+
+    @Override
+    public String sqlToTurnOnReferentialConstraintCheck(String tableName) {
+        return "SET REFERENTIAL_INTEGRITY TRUE";
     }
 }

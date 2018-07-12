@@ -1,6 +1,5 @@
 package org.umlg.sqlg.test.gremlincompile;
 
-import org.apache.tinkerpop.gremlin.AbstractGremlinTest;
 import org.apache.tinkerpop.gremlin.process.traversal.P;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal;
 import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
@@ -9,9 +8,6 @@ import org.apache.tinkerpop.gremlin.structure.Edge;
 import org.apache.tinkerpop.gremlin.structure.Graph;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
-import org.apache.tinkerpop.gremlin.structure.io.GraphReader;
-import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoIo;
-import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoReader;
 import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -21,7 +17,6 @@ import org.umlg.sqlg.test.BaseTest;
 
 import java.beans.PropertyVetoException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +29,7 @@ public class TestGremlinCompileGraphStep extends BaseTest {
     @BeforeClass
     public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
         BaseTest.beforeClass();
-        if (configuration.getString("jdbc.url").contains("postgresql")) {
+        if (isPostgres()) {
             configuration.addProperty("distributed", true);
         }
     }
@@ -42,12 +37,7 @@ public class TestGremlinCompileGraphStep extends BaseTest {
     @Test
     public void gg_V_asXaX_outXcreatedX_inXcreatedX_whereXneqXaXX_asXbX_selectXa_bX_addInEXa_codeveloper_b_year_2009X() throws IOException, InterruptedException {
         Graph g = this.sqlgGraph;
-        final GraphReader reader = GryoReader.build()
-                .mapper(g.io(GryoIo.build()).mapper().create())
-                .create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/tinkerpop-modern.kryo")) {
-            reader.readGraph(stream, g);
-        }
+        loadModern(this.sqlgGraph);
         assertModernGraph(g, true, false);
         DefaultGraphTraversal<Vertex, Map<String, Vertex>> traversal1 = (DefaultGraphTraversal<Vertex, Map<String, Vertex>>) this.sqlgGraph.traversal()
                 .V().as("a")
@@ -66,7 +56,7 @@ public class TestGremlinCompileGraphStep extends BaseTest {
                 .in("created")
                 .where(P.neq("a")).as("b")
                 .<Vertex>select("a", "b")
-                .addInE("a", "co-developer", "b", "year", 2009);
+                .addE("co-developer").from("a").to("b").property("year", 2009);
         int count = 0;
         Assert.assertEquals(6, traversal.getSteps().size());
         while (traversal.hasNext()) {
@@ -96,12 +86,7 @@ public class TestGremlinCompileGraphStep extends BaseTest {
     @Test
     public void g_V_asXaX_outXcreatedX_inXcreatedX_whereXneqXaXX_asXbX_selectXa_bX_addInEXa_codeveloper_b_year_2009X() throws IOException, InterruptedException {
         Graph g = this.sqlgGraph;
-        final GraphReader reader = GryoReader.build()
-                .mapper(g.io(GryoIo.build()).mapper().create())
-                .create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/tinkerpop-modern.kryo")) {
-            reader.readGraph(stream, g);
-        }
+        loadModern(this.sqlgGraph);
         assertModernGraph(g, true, false);
         DefaultGraphTraversal<Vertex, Edge> traversal = (DefaultGraphTraversal<Vertex, Edge>) this.sqlgGraph.traversal()
                 .V().as("a")
@@ -109,7 +94,7 @@ public class TestGremlinCompileGraphStep extends BaseTest {
                 .in("created")
                 .where(P.neq("a")).as("b")
                 .select("a", "b")
-                .addInE("a", "co-developer", "b", "year", 2009);
+                .addE("co-developer").property("year", 2009).from("a").to("b");
         Assert.assertEquals(6, traversal.getSteps().size());
         printTraversalForm(traversal);
         int count = 0;
@@ -140,12 +125,7 @@ public class TestGremlinCompileGraphStep extends BaseTest {
     @Test
     public void g_VX1X_outEXknowsX_hasXweight_1X_asXhereX_inV_hasXname_joshX_selectXhereX() throws IOException, InterruptedException {
         Graph g = this.sqlgGraph;
-        final GraphReader reader = GryoReader.build()
-                .mapper(g.io(GryoIo.build()).mapper().create())
-                .create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/tinkerpop-modern.kryo")) {
-            reader.readGraph(stream, g);
-        }
+        loadModern(this.sqlgGraph);
         assertModernGraph(g, true, false);
         Object v1Id = convertToVertexId("marko");
         List<DefaultGraphTraversal<Vertex, Edge>> traversals = Arrays.asList(
@@ -186,16 +166,15 @@ public class TestGremlinCompileGraphStep extends BaseTest {
 
     @Test
     public void g_V_localXinEXknowsX_limitX2XX_outV_name() throws IOException {
-        Graph g = this.sqlgGraph;
-        final GraphReader reader = GryoReader.build()
-                .mapper(g.io(GryoIo.build()).mapper().create())
-                .create();
-        try (final InputStream stream = AbstractGremlinTest.class.getResourceAsStream("/tinkerpop-modern.kryo")) {
-            reader.readGraph(stream, g);
-        }
-        assertModernGraph(g, true, false);
-        DefaultGraphTraversal<Vertex, String> traversal = (DefaultGraphTraversal)g.traversal()
-                .V().local(__.inE("knows").limit(2)).outV().values("name");
+        loadModern();
+        assertModernGraph(this.sqlgGraph, true, false);
+        DefaultGraphTraversal<Vertex, String> traversal = (DefaultGraphTraversal<Vertex, String>)this.sqlgGraph.traversal()
+                .V()
+                .local(
+                        __.inE("knows").limit(2)
+                )
+                .outV()
+                .<String>values("name");
         Assert.assertEquals(4, traversal.getSteps().size());
         printTraversalForm(traversal);
         Assert.assertEquals(4, traversal.getSteps().size());

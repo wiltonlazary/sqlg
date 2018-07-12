@@ -21,7 +21,7 @@ public class TestBatchNormalDateTime extends BaseTest {
     @BeforeClass
     public static void beforeClass() throws ClassNotFoundException, IOException, PropertyVetoException {
         BaseTest.beforeClass();
-        if (configuration.getString("jdbc.url").contains("postgresql")) {
+        if (isPostgres()) {
             configuration.addProperty("distributed", true);
         }
     }
@@ -30,7 +30,6 @@ public class TestBatchNormalDateTime extends BaseTest {
     public void beforeTest() {
         Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsBatchMode());
     }
-
 
     @Test
     public void testLocalDateTime() throws InterruptedException {
@@ -74,13 +73,22 @@ public class TestBatchNormalDateTime extends BaseTest {
     @Test
     public void testZonedDateTime() throws InterruptedException {
         ZonedDateTime zonedDateTime = ZonedDateTime.now();
+        ZonedDateTime zdt2 = ZonedDateTime.of(LocalDateTime.now(), ZoneId.of("+02:00"));
+        // ZoneId corrects +02:00 into GTM+02:00
+        ZonedDateTime zdt2Fixed = ZonedDateTime.of(zdt2.toLocalDateTime(), ZoneId.of("GMT+02:00"));
         this.sqlgGraph.tx().batchMode(BatchManager.BatchModeType.NORMAL);
-        Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "zonedDateTime", zonedDateTime);
+        Vertex a1 = this.sqlgGraph.addVertex(T.label, "A", "zonedDateTime", zonedDateTime
+                , "zdt2", zdt2
+                , "zdt2Fixed", zdt2Fixed);
         this.sqlgGraph.tx().commit();
         Assert.assertEquals(zonedDateTime, this.sqlgGraph.traversal().V(a1).values("zonedDateTime").next());
+        Assert.assertEquals(zdt2Fixed, this.sqlgGraph.traversal().V(a1).values("zdt2").next());
+        Assert.assertEquals(zdt2Fixed, this.sqlgGraph.traversal().V(a1).values("zdt2Fixed").next());
         if (this.sqlgGraph1 != null) {
             Thread.sleep(SLEEP_TIME);
             Assert.assertEquals(zonedDateTime, this.sqlgGraph1.traversal().V(a1).values("zonedDateTime").next());
+            Assert.assertEquals(zdt2Fixed, this.sqlgGraph1.traversal().V(a1).values("zdt2").next());
+            Assert.assertEquals(zdt2Fixed, this.sqlgGraph1.traversal().V(a1).values("zdt2Fixed").next());
         }
     }
 
@@ -229,6 +237,5 @@ public class TestBatchNormalDateTime extends BaseTest {
         Assert.assertEquals(period2, vertices.get(2).<Period>value("period"));
         Assert.assertEquals(period3, vertices.get(3).<Period>value("period"));
     }
-
 
 }

@@ -9,6 +9,8 @@ import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
 import org.apache.tinkerpop.gremlin.process.traversal.util.AndP;
 import org.apache.tinkerpop.gremlin.process.traversal.util.OrP;
 import org.apache.tinkerpop.gremlin.structure.T;
+import org.umlg.sqlg.predicate.PropertyReference;
+import org.umlg.sqlg.predicate.Existence;
 import org.umlg.sqlg.predicate.FullText;
 import org.umlg.sqlg.predicate.Text;
 import org.umlg.sqlg.sql.dialect.SqlDialect;
@@ -22,8 +24,8 @@ import java.util.Collection;
  */
 public class WhereClause {
 
-    public static final String LIKE = " like ?";
-    public static final String NOT_LIKE = " not like ?";
+    private static final String LIKE = " like ?";
+    private static final String NOT_LIKE = " not like ?";
     private P<?> p;
 
     private WhereClause(P<?> p) {
@@ -34,16 +36,21 @@ public class WhereClause {
         return new WhereClause(p);
     }
 
-    public String toSql(SqlgGraph sqlgGraph, SchemaTableTree schemaTableTree, HasContainer hasContainer) {
+    String toSql(SqlgGraph sqlgGraph, SchemaTableTree schemaTableTree, HasContainer hasContainer) {
         String result = "";
 
         String prefix = sqlgGraph.getSqlDialect().maybeWrapInQoutes(schemaTableTree.getSchemaTable().getSchema());
         prefix += ".";
         prefix += sqlgGraph.getSqlDialect().maybeWrapInQoutes(schemaTableTree.getSchemaTable().getTable());
 
-        if (p.getBiPredicate() instanceof Compare) {
+        if (p.getValue() instanceof PropertyReference && p.getBiPredicate() instanceof Compare){
+        	result += prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
+        	String column= prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(((PropertyReference)p.getValue()).getColumnName());
+        	result += compareToSql((Compare) p.getBiPredicate(),column);
+        	return result;
+        } else if (p.getBiPredicate() instanceof Compare) {
             if (hasContainer.getKey().equals(T.id.getAccessor())) {
-                result += prefix + ".\"ID\"";
+                result += prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID");
             } else {
                 result += prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
             }
@@ -51,7 +58,7 @@ public class WhereClause {
             return result;
         } else if ((!sqlgGraph.getSqlDialect().supportsBulkWithinOut() || (!SqlgUtil.isBulkWithinAndOut(sqlgGraph, hasContainer))) && p.getBiPredicate() instanceof Contains) {
             if (hasContainer.getKey().equals(T.id.getAccessor())) {
-                result += prefix + ".\"ID\"";
+                result += prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID");
             } else {
                 result += prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
             }
@@ -59,7 +66,7 @@ public class WhereClause {
             return result;
         } else if (sqlgGraph.getSqlDialect().supportsBulkWithinOut() && p.getBiPredicate() instanceof Contains) {
             result += " tmp" + (schemaTableTree.rootSchemaTableTree().getTmpTableAliasCounter() - 1);
-            result += " .without IS NULL";
+            result += ".without IS NULL";
             return result;
         } else if (p instanceof AndP) {
             AndP<?> andP = (AndP<?>) p;
@@ -67,7 +74,7 @@ public class WhereClause {
             P<?> p1 = andP.getPredicates().get(0);
             String key;
             if (hasContainer.getKey().equals(T.id.getAccessor())) {
-                key = result + "\"ID\"";
+                key = result + sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID");
             } else {
                 key = result + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
             }
@@ -81,7 +88,7 @@ public class WhereClause {
             P<?> p1 = orP.getPredicates().get(0);
             String key;
             if (hasContainer.getKey().equals(T.id.getAccessor())) {
-                key = result + "\"ID\"";
+                key = result + sqlgGraph.getSqlDialect().maybeWrapInQoutes("ID");
             } else {
                 key = result + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
             }
@@ -97,6 +104,10 @@ public class WhereClause {
         	prefix += "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
         	FullText ft=(FullText)p.getBiPredicate();
         	result += sqlgGraph.getSqlDialect().getFullTextQueryText(ft, prefix);
+        	return result;
+        } else if (p.getBiPredicate() instanceof Existence){
+        	result += prefix + "." + sqlgGraph.getSqlDialect().maybeWrapInQoutes(hasContainer.getKey());
+        	result += " "+p.getBiPredicate().toString();
         	return result;
         }
         throw new IllegalStateException("Unhandled BiPredicate " + p.getBiPredicate().toString());
@@ -121,6 +132,26 @@ public class WhereClause {
         }
     }
 
+    private static String compareToSql(Compare compare,String column) {
+        switch (compare) {
+            case eq:
+                return " = " + column;
+            case neq:
+                return " <> " + column;
+            case gt:
+                return " > " + column;
+            case gte:
+                return " >= " + column;
+            case lt:
+                return " < " + column;
+            case lte:
+                return " <= " + column;
+            default:
+                throw new RuntimeException("Unknown Compare " + compare.name());
+        }
+    }
+
+    
     private static String containsToSql(Contains contains, int size) {
         String result;
         if (size == 1) {
@@ -235,6 +266,8 @@ public class WhereClause {
             keyValueMap.put(hasContainer.getKey(), hasContainer.getValue() + "%");
         } else if (p.getBiPredicate() == Text.endsWith || p.getBiPredicate() == Text.nendsWith) {
             keyValueMap.put(hasContainer.getKey(), "%" + hasContainer.getValue());
+        } else if (p.getBiPredicate() instanceof Existence){
+        	// no value
         } else {
             keyValueMap.put(hasContainer.getKey(), hasContainer.getValue());
         }

@@ -9,6 +9,10 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.umlg.sqlg.structure.*;
+import org.umlg.sqlg.structure.topology.EdgeLabel;
+import org.umlg.sqlg.structure.topology.GlobalUniqueIndex;
+import org.umlg.sqlg.structure.topology.PropertyColumn;
+import org.umlg.sqlg.structure.topology.VertexLabel;
 import org.umlg.sqlg.test.BaseTest;
 
 import java.time.LocalDate;
@@ -83,7 +87,6 @@ public class TestLoadSchema extends BaseTest {
 
     @Test
     public void testLoadingJson() throws Exception {
-        Assume.assumeTrue(this.sqlgGraph.getSqlDialect().supportsJson());
         ObjectMapper objectMapper =  new ObjectMapper();
         ObjectNode json = new ObjectNode(objectMapper.getNodeFactory());
         json.put("username", "john");
@@ -259,8 +262,10 @@ public class TestLoadSchema extends BaseTest {
         }
     }
 
+    //TODO https://github.com/pietermartin/sqlg/issues/238
     @Test
     public void testLoadSchemaWithSimilarForeignKeysAcrossSchemasMultipleEdges() throws Exception {
+        Assume.assumeFalse(this.sqlgGraph.getSqlDialect().isMssqlServer());
         Vertex realBsc = this.sqlgGraph.addVertex(T.label, "real.bsc");
         Vertex realBscWE = this.sqlgGraph.addVertex(T.label, "workspaceElement");
         Vertex planBsc = this.sqlgGraph.addVertex(T.label, "plan.bsc");

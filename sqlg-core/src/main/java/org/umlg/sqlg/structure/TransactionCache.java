@@ -23,9 +23,28 @@ class TransactionCache {
      */
     private boolean lazyQueries;
 
+    /**
+     * default fetch size
+     */
+    private Integer fetchSize = null;
+    
 
 	static TransactionCache of(boolean cacheVertices, Connection connection, BatchManager batchManager,boolean lazyQueries) {
         return new TransactionCache(cacheVertices, connection, batchManager,lazyQueries);
+    }
+
+    static TransactionCache of(boolean cacheVertices, Connection connection,boolean lazyQueries) {
+        return new TransactionCache(cacheVertices, connection, lazyQueries);
+    }
+
+    private TransactionCache(
+            boolean cacheVertices,
+            Connection connection,
+            boolean lazyQueries) {
+
+        this.cacheVertices = cacheVertices;
+        this.connection = connection;
+        this.lazyQueries = lazyQueries;
     }
 
     private TransactionCache(
@@ -34,10 +53,8 @@ class TransactionCache {
             BatchManager batchManager,
             boolean lazyQueries) {
 
-        this.cacheVertices = cacheVertices;
-        this.connection = connection;
+	    this(cacheVertices, connection, lazyQueries);
         this.batchManager = batchManager;
-        this.lazyQueries = lazyQueries;
     }
 
     Connection getConnection() {
@@ -54,7 +71,9 @@ class TransactionCache {
 
     void clear() {
         this.elementPropertyRollbackFunctions.clear();
-        this.batchManager.clear();
+        if (this.batchManager != null) {
+            this.batchManager.clear();
+        }
         if (this.cacheVertices) {
             this.vertexCache.clear();
         }
@@ -135,6 +154,14 @@ class TransactionCache {
      */
 	public void setLazyQueries(boolean lazyQueries) {
 		this.lazyQueries = lazyQueries;
+	}
+
+	public Integer getFetchSize() {
+		return fetchSize;
+	}
+
+	public void setFetchSize(Integer fetchSize) {
+		this.fetchSize = fetchSize;
 	}
 
 }

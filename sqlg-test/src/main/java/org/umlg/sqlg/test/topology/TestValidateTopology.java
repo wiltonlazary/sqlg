@@ -7,6 +7,7 @@ import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.umlg.sqlg.structure.*;
+import org.umlg.sqlg.structure.topology.*;
 import org.umlg.sqlg.test.BaseTest;
 
 import java.beans.PropertyVetoException;
@@ -44,9 +45,16 @@ public class TestValidateTopology extends BaseTest {
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
             if (this.sqlgGraph.getSqlDialect().needsSchemaDropCascade()) {
-                statement.execute("DROP SCHEMA " + "\"A\" CASCADE");
+                statement.execute("DROP SCHEMA " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + " CASCADE");
             } else {
-                statement.execute("DROP SCHEMA " + "\"A\"");
+                if (this.sqlgGraph.getSqlDialect().isMssqlServer()) {
+                    statement.execute("DROP TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") +
+                            "." +
+                            this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_A"));
+                    statement.execute("DROP SCHEMA " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A"));
+                } else {
+                    statement.execute("DROP SCHEMA " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A"));
+                }
             }
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
@@ -64,7 +72,9 @@ public class TestValidateTopology extends BaseTest {
         this.sqlgGraph.tx().commit();
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
-            statement.execute("DROP TABLE " + "\"A\".\"V_A\" CASCADE ");
+            statement.execute("DROP TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                    this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_A") +
+                    (this.sqlgGraph.getSqlDialect().supportsCascade() ? " CASCADE " : ""));
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
             fail(e.getMessage());
@@ -83,7 +93,9 @@ public class TestValidateTopology extends BaseTest {
         this.sqlgGraph.tx().commit();
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
-            statement.execute("DROP TABLE " + "\"A\".\"E_ab\" CASCADE ");
+            statement.execute("DROP TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                    this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_ab") +
+                    (this.sqlgGraph.getSqlDialect().supportsCascade() ? " CASCADE ": ""));
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
             fail(e.getMessage());
@@ -100,7 +112,13 @@ public class TestValidateTopology extends BaseTest {
         this.sqlgGraph.tx().commit();
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
-            statement.execute("ALTER TABLE " + "\"A\".\"V_A\" DROP \"name\"");
+            if (!this.sqlgGraph.getSqlDialect().isMssqlServer()) {
+                statement.execute("ALTER TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_A") + " DROP " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("name"));
+            } else {
+                statement.execute("ALTER TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_A") + " DROP COLUMN " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("name"));
+            }
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
             fail(e.getMessage());
@@ -119,7 +137,13 @@ public class TestValidateTopology extends BaseTest {
         this.sqlgGraph.tx().commit();
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
-            statement.execute("ALTER TABLE " + "\"A\".\"E_ab\" DROP \"name\"");
+            if (!this.sqlgGraph.getSqlDialect().isMssqlServer()) {
+                statement.execute("ALTER TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_ab") + " DROP " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("name"));
+            } else {
+                statement.execute("ALTER TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("E_ab") + " DROP COLUMN " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("name"));
+            }
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
             fail(e.getMessage());
@@ -136,9 +160,25 @@ public class TestValidateTopology extends BaseTest {
         List<PropertyColumn> properties = new ArrayList<>(this.sqlgGraph.getTopology().getSchema("A").get().getVertexLabel("A").get().getProperties().values());
         this.sqlgGraph.getTopology().getSchema("A").get().getVertexLabel("A").get().ensureIndexExists(IndexType.UNIQUE, properties);
         this.sqlgGraph.tx().commit();
+
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
-            statement.execute("DROP INDEX \"A\".\"A_V_A_nameIdx\"");
+            String indexName = this.sqlgGraph.getSqlDialect().indexName(SchemaTable.of("A", "A"), Topology.VERTEX_PREFIX, Collections.singletonList("name"));
+            if (this.sqlgGraph.getSqlDialect().isMssqlServer()) {
+                statement.execute("DROP INDEX " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(indexName));
+            } else if (this.sqlgGraph.getSqlDialect().isMariaDb()) {
+                statement.execute("DROP INDEX " +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(indexName) +
+                        " ON " +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("V_A"));
+            } else {
+                statement.execute("DROP INDEX " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes("A") + "." +
+                        this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(indexName));
+
+            }
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
             fail(e.getMessage());
@@ -171,7 +211,9 @@ public class TestValidateTopology extends BaseTest {
         this.sqlgGraph.tx().commit();
         Connection conn = this.sqlgGraph.tx().getConnection();
         try (Statement statement = conn.createStatement()) {
-            statement.execute("DROP TABLE " + "\"" + Schema.GLOBAL_UNIQUE_INDEX_SCHEMA + "\".\"" + SchemaManager.VERTEX_PREFIX + globalUniqueIndex.getName() + "\" CASCADE ");
+            statement.execute("DROP TABLE " + this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(Schema.GLOBAL_UNIQUE_INDEX_SCHEMA) + "." +
+                    this.sqlgGraph.getSqlDialect().maybeWrapInQoutes(Topology.VERTEX_PREFIX + globalUniqueIndex.getName()) +
+                    (this.sqlgGraph.getSqlDialect().supportsCascade() ? " CASCADE " : ""));
             this.sqlgGraph.tx().commit();
         } catch (SQLException e) {
             fail(e.getMessage());
